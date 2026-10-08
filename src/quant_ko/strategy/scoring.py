@@ -29,7 +29,7 @@ def _rank_growth_with_turnaround(
     Within turnaround and within non-turnaround, stocks are ranked by growth rate descending.
     """
     is_turnaround = df[turnaround_col].fillna(False).astype(bool)
-    growth = df[growth_col].fillna(-np.inf).astype(float)
+    growth = pd.to_numeric(df[growth_col], errors="coerce").fillna(-np.inf)
 
     # Base large bonus for turnaround so they always exceed non-turnaround
     # Use 1e9 as base bonus
