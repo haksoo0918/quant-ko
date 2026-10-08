@@ -20,17 +20,13 @@ def get_rebalance_schedule(
     trading_days: Sequence[str],
     start_date: str | None = None,
     end_date: str | None = None,
+    rebalance_freq: str = "quarterly",
 ) -> list[RebalanceEvent]:
-    """Calculate the quarterly rebalancing schedule based on PRD section 3.4.
+    """Calculate the rebalancing schedule.
 
-    Rules:
-    - 4 rebalancing dates per year:
-      - 1st trading day of April (04)
-      - Last trading day of May (05)
-      - Last trading day of August (08)
-      - Last trading day of November (11)
-    - Prior date is the trading day immediately preceding rebalance_date.
-    - If start_date and/or end_date are provided, filters rebalance_date in [start_date, end_date].
+    Parameters:
+    - rebalance_freq: "quarterly" (4 times a year: 1st day of Apr, last days of May/Aug/Nov)
+                      or "monthly" (last trading day of every month).
     """
     if not trading_days:
         return []
@@ -49,15 +45,38 @@ def get_rebalance_schedule(
     norm_start = normalize_date(start_date) if start_date else None
     norm_end = normalize_date(end_date) if end_date else None
 
-    # Target months: 4 (first day), 5 (last day), 8 (last day), 11 (last day)
+    all_years = sorted({dt_key[0] for dt_key in by_year_month.keys()})
+    events: list[RebalanceEvent] = []
+
+    if rebalance_freq == "monthly":
+        for (year, month), days in sorted(by_year_month.items()):
+            if not days:
+                continue
+            reb_date = days[-1]  # Last trading day of each month
+            if norm_start and reb_date < norm_start:
+                continue
+            if norm_end and reb_date > norm_end:
+                continue
+            idx = day_to_idx[reb_date]
+            if idx == 0:
+                continue
+            prior_date = sorted_days[idx - 1]
+            events.append(
+                RebalanceEvent(
+                    rebalance_date=reb_date,
+                    prior_date=prior_date,
+                    period_label=f"{year:04d}-{month:02d}",
+                )
+            )
+        return events
+
+    # Quarterly: Target months: 4 (first day), 5 (last day), 8 (last day), 11 (last day)
     target_months = [
         (4, "first"),
         (5, "last"),
         (8, "last"),
         (11, "last"),
     ]
-
-    all_years = sorted({dt_key[0] for dt_key in by_year_month.keys()})
 
     events: list[RebalanceEvent] = []
     for year in all_years:

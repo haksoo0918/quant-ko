@@ -265,6 +265,7 @@ class BacktestEngine:
         min_trading_value: float = 200_000_000.0,
         market_cap_quantile: float = 0.20,
         risk_free_rate: float = 0.035,
+        rebalance_freq: str = "quarterly",
     ) -> None:
         self.store = store
         self.initial_capital = initial_capital
@@ -273,6 +274,7 @@ class BacktestEngine:
         self.min_trading_value = min_trading_value
         self.market_cap_quantile = market_cap_quantile
         self.risk_free_rate = risk_free_rate
+        self.rebalance_freq = rebalance_freq
 
     def run(
         self,
@@ -312,6 +314,7 @@ class BacktestEngine:
             all_trading_days,
             start_date=start_date,
             end_date=end_date,
+            rebalance_freq=self.rebalance_freq,
         )
         reb_date_map = {e.rebalance_date: e for e in rebalance_events}
 
