@@ -24,16 +24,18 @@ class LiveRebalancer:
         kis_client: KisClient,
         notifier: DiscordNotifier | None = None,
         env: str = "mock",
+        rebalance_freq: str = "quarterly",
     ) -> None:
         self.store = store
         self.kis_client = kis_client
         self.notifier = notifier
         self.env = env
+        self.rebalance_freq = rebalance_freq
 
     def is_rebalance_date(self, date: str, trading_days: list[str]) -> bool:
-        """Check if given date matches scheduled quarterly rebalancing date."""
+        """Check if given date matches scheduled rebalancing date."""
         norm = normalize_date(date)
-        schedule = get_rebalance_schedule(trading_days)
+        schedule = get_rebalance_schedule(trading_days, rebalance_freq=self.rebalance_freq)
         reb_dates = {e.rebalance_date for e in schedule}
         return norm in reb_dates
 
