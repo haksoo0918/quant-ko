@@ -5,18 +5,20 @@ Since 1안 팩터(시총 하위 20%, 거래대금 0원)의 매월 종목 선정 
 이를 1회만 계산해 cache에 저장하면 모멘텀 필터별 시뮬레이션을 몇 초 만에 고속으로 실행할 수 있습니다.
 """
 
-import pickle
-import os
 import logging
-from quant_ko.data.store import DataStore
+import os
+import pickle
+
 from quant_ko.backtest.calendar import get_rebalance_schedule
-from quant_ko.strategy.universe import filter_universe
+from quant_ko.data.store import DataStore
 from quant_ko.strategy.scoring import score_and_select
+from quant_ko.strategy.universe import filter_universe
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("cache_monthly_targets")
 
 CACHE_FILE = "data/monthly_targets_cache.pkl"
+
 
 def main():
     store = DataStore("data/quant_ko.db")
@@ -39,7 +41,9 @@ def main():
     for idx, ev in enumerate(events, 1):
         if ev.rebalance_date in cache:
             continue
-        logger.info("[%d/%d] Scoring for %s (prior: %s)...", idx, total, ev.rebalance_date, ev.prior_date)
+        logger.info(
+            "[%d/%d] Scoring for %s (prior: %s)...", idx, total, ev.rebalance_date, ev.prior_date
+        )
         universe_df = filter_universe(
             store=store,
             as_of_date=ev.prior_date,
@@ -61,6 +65,7 @@ def main():
     with open(CACHE_FILE, "wb") as f:
         pickle.dump(cache, f)
     logger.info("Successfully cached %d monthly target sets to %s!", len(cache), CACHE_FILE)
+
 
 if __name__ == "__main__":
     main()

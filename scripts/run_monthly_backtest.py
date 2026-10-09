@@ -8,11 +8,13 @@ Comparing:
 """
 
 import logging
-from quant_ko.data.store import DataStore
+
 from quant_ko.backtest.engine import BacktestEngine
+from quant_ko.data.store import DataStore
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("run_monthly_backtest")
+
 
 def main():
     store = DataStore("data/quant_ko.db")
@@ -92,7 +94,7 @@ def main():
         tv_str = "제한없음" if exp["min_tv"] == 0 else f"{int(exp['min_tv'] / 100_000_000)}억 이상"
         freq_str = "매월 말일" if exp["freq"] == "monthly" else "분기 (연 4회)"
         summary_table.append(
-            f"| {exp['title']} | {freq_str} | 하위 {int(exp['quantile']*100)}% | {tv_str} | **{m.total_return*100:.2f}%** | {m.cagr*100:.2f}% | {m.mdd*100:.2f}% | {m.sharpe_ratio:.2f} | {int(total_fees):,}원 |"
+            f"| {exp['title']} | {freq_str} | 하위 {int(exp['quantile'] * 100)}% | {tv_str} | **{m.total_return * 100:.2f}%** | {m.cagr * 100:.2f}% | {m.mdd * 100:.2f}% | {m.sharpe_ratio:.2f} | {int(total_fees):,}원 |"
         )
 
         report_md = result.generate_report(format_type="markdown")
@@ -102,7 +104,7 @@ def main():
         detail_sections.append("| 연도 | 연간 수익률 |")
         detail_sections.append("|:---:|:---:|")
         for yr, yret in sorted(m.yearly_returns.items()):
-            detail_sections.append(f"| {yr}년 | {yret*100:.2f}% |")
+            detail_sections.append(f"| {yr}년 | {yret * 100:.2f}% |")
 
     md_output.extend(summary_table)
     md_output.extend(detail_sections)
@@ -112,6 +114,7 @@ def main():
         f.write("\n".join(md_output))
 
     logger.info("All backtests completed! Saved to %s", output_path)
+
 
 if __name__ == "__main__":
     main()

@@ -1,18 +1,20 @@
 """Collect 2025~2026 financials and prices up to current date."""
 
+import logging
 import os
 import sys
-import logging
-import pandas as pd
+
 import FinanceDataReader as fdr
+import pandas as pd
 from dotenv import load_dotenv
 
-from quant_ko.data.store import DataStore
 from quant_ko.data.collector import DataCollector
 from quant_ko.data.dart import DartClient
+from quant_ko.data.store import DataStore
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("collect_latest")
+
 
 def main():
     load_dotenv()
@@ -77,6 +79,7 @@ def main():
         end_date="2026-10-07",
     )
     logger.info("Data collection up to 2026 complete!")
+
 
 if __name__ == "__main__":
     main()

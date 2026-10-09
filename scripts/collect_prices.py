@@ -1,13 +1,16 @@
 """Collect historical daily prices for target small-cap stocks."""
 
 import logging
-import pandas as pd
+
 import FinanceDataReader as fdr
-from quant_ko.data.store import DataStore
+import pandas as pd
+
 from quant_ko.data.collector import DataCollector
+from quant_ko.data.store import DataStore
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("collect_prices")
+
 
 def main():
     store = DataStore("data/quant_ko.db")
@@ -50,6 +53,7 @@ def main():
         price_source_fn=fetch_fdr_with_shares,
     )
     logger.info("Finished collecting historical prices. Total rows saved: %d", saved)
+
 
 if __name__ == "__main__":
     main()

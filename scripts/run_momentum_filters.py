@@ -18,22 +18,24 @@
    - Shadow Index <= 60일 SMA: 전량 현금화 / CD금리 ETF 대피
 """
 
-import pickle
 import logging
+import pickle
 from datetime import datetime
-import pandas as pd
-import numpy as np
 
-from quant_ko.data.store import DataStore
-from quant_ko.data.krx import normalize_date
+import numpy as np
+import pandas as pd
+
 from quant_ko.backtest.calendar import get_rebalance_schedule
-from quant_ko.backtest.engine import execute_rebalance, EventTracker, Trade
+from quant_ko.backtest.engine import EventTracker, Trade, execute_rebalance
 from quant_ko.backtest.metrics import calculate_metrics
+from quant_ko.data.krx import normalize_date
+from quant_ko.data.store import DataStore
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("run_momentum_filters")
 
 CACHE_FILE = "data/monthly_targets_cache.pkl"
+
 
 def get_cd_daily_return_series(trading_days: list[str]) -> pd.Series:
     """Return daily return multiplier for CD rate proxy."""
@@ -62,6 +64,7 @@ def get_cd_daily_return_series(trading_days: list[str]) -> pd.Series:
 
     return pd.Series(daily_ret)
 
+
 def run_simulation(
     store: DataStore,
     mode: str,  # 'no_filter', 'seasonality', 'kosdaq_ma60', 'kosdaq_ma200', 'asset_curve_ma60'
@@ -74,7 +77,9 @@ def run_simulation(
     initial_capital: float = 10_000_000.0,
     cost_rate: float = 0.003,
 ) -> dict:
-    events = get_rebalance_schedule(trading_days, start_date="2019-01-01", end_date="2026-10-07", rebalance_freq="monthly")
+    events = get_rebalance_schedule(
+        trading_days, start_date="2019-01-01", end_date="2026-10-07", rebalance_freq="monthly"
+    )
     reb_date_map = {e.rebalance_date: e for e in events}
 
     current_cash = float(initial_capital)
@@ -130,7 +135,7 @@ def run_simulation(
     active_delisted_set: set[str] = set()
     is_parked_cd = False
 
-    for idx, current_date in enumerate(trading_days):
+    for _idx, current_date in enumerate(trading_days):
         price_map = price_by_date.get(current_date, {})
         active_desig_map = desigs_by_date.get(current_date, {})
 
@@ -170,7 +175,6 @@ def run_simulation(
 
         # 3. Rebalance check
         if current_date in reb_date_map:
-            event = reb_date_map[current_date]
             cached_item = cache.get(current_date)
             selected_df = cached_item["selected_df"] if cached_item else pd.DataFrame()
 
@@ -195,18 +199,18 @@ def run_simulation(
                 # 코스닥 종가 > 60일 이동평균
                 close_val = kosdaq_close.get(current_date, 0.0)
                 ma60_val = kosdaq_ma60.get(current_date, 0.0)
-                allow_equity = (close_val >= ma60_val)
+                allow_equity = close_val >= ma60_val
             elif mode == "kosdaq_ma200":
                 # 코스닥 종가 > 200일 이동평균
                 close_val = kosdaq_close.get(current_date, 0.0)
                 ma200_val = kosdaq_ma200.get(current_date, 0.0)
-                allow_equity = (close_val >= ma200_val)
+                allow_equity = close_val >= ma200_val
             elif mode == "asset_curve_ma60":
                 # 자체 자산곡선 60일 SMA 추적
                 if len(shadow_equity_history) >= 60:
                     sma60 = np.mean(shadow_equity_history[-60:])
                     curr_shadow = shadow_equity_history[-1]
-                    allow_equity = (curr_shadow >= sma60)
+                    allow_equity = curr_shadow >= sma60
                 else:
                     allow_equity = True
 
@@ -214,7 +218,9 @@ def run_simulation(
             if mode == "asset_curve_ma60":
                 shadow_targets = {}
                 if not selected_df.empty:
-                    shadow_targets = dict(zip(selected_df["ticker"], selected_df["weight"], strict=False))
+                    shadow_targets = dict(
+                        zip(selected_df["ticker"], selected_df["weight"], strict=False)
+                    )
                 shadow_res = execute_rebalance(
                     date=current_date,
                     current_cash=shadow_cash,
@@ -229,7 +235,9 @@ def run_simulation(
             # Actual portfolio rebalance
             target_weights = {}
             if allow_equity and not selected_df.empty:
-                target_weights = dict(zip(selected_df["ticker"], selected_df["weight"], strict=False))
+                target_weights = dict(
+                    zip(selected_df["ticker"], selected_df["weight"], strict=False)
+                )
                 is_parked_cd = False
             else:
                 # Sell all equities and park 100% into CD
@@ -247,23 +255,27 @@ def run_simulation(
             current_cash = reb_res.cash
             current_positions = reb_res.positions
             all_trades.extend(reb_res.trades)
-            rebalance_records.append({
-                "rebalance_date": current_date,
-                "date": current_date,
-                "allow_equity": allow_equity,
-                "trades_count": len(reb_res.trades),
-                "turnover_rate": reb_res.turnover_rate,
-            })
+            rebalance_records.append(
+                {
+                    "rebalance_date": current_date,
+                    "date": current_date,
+                    "allow_equity": allow_equity,
+                    "trades_count": len(reb_res.trades),
+                    "turnover_rate": reb_res.turnover_rate,
+                }
+            )
 
         # 4. Daily valuation
         positions_val = sum(qty * price_map.get(t, 0.0) for t, qty in current_positions.items())
         total_equity = current_cash + positions_val
-        equity_records.append({
-            "date": current_date,
-            "equity": total_equity,
-            "cash": current_cash,
-            "positions_value": positions_val,
-        })
+        equity_records.append(
+            {
+                "date": current_date,
+                "equity": total_equity,
+                "cash": current_cash,
+                "positions_value": positions_val,
+            }
+        )
 
     equity_df = pd.DataFrame(equity_records)
     metrics = calculate_metrics(
@@ -337,7 +349,7 @@ def main():
         m = res["metrics"]
         total_fees = sum(t.fee for t in res["trades"])
         md_lines.append(
-            f"| **{res['label']}** | **{m.total_return*100:+.2f}%** | {m.cagr*100:.2f}% | **{m.mdd*100:.2f}%** | {m.sharpe_ratio:.2f} | {m.win_rate_yearly*100:.1f}% | {m.win_rate_rebalance*100:.1f}% | {int(total_fees):,}원 |"
+            f"| **{res['label']}** | **{m.total_return * 100:+.2f}%** | {m.cagr * 100:.2f}% | **{m.mdd * 100:.2f}%** | {m.sharpe_ratio:.2f} | {m.win_rate_yearly * 100:.1f}% | {m.win_rate_rebalance * 100:.1f}% | {int(total_fees):,}원 |"
         )
 
     md_lines.append("\n### 연도별 수익률 비교\n")
@@ -351,7 +363,7 @@ def main():
         row = [f"**{yr}년**"]
         for r in results:
             yret = r["metrics"].yearly_returns.get(yr, 0.0)
-            row.append(f"{yret*100:+.2f}%")
+            row.append(f"{yret * 100:+.2f}%")
         md_lines.append("| " + " | ".join(row) + " |")
 
     output_path = "docs/momentum_filters_backtest_result.md"
@@ -365,10 +377,11 @@ def main():
         m = res["metrics"]
         total_fees = sum(t.fee for t in res["trades"])
         print(f"[{res['label']}]")
-        print(f"  누적: {m.total_return*100:+.2f}%, CAGR: {m.cagr*100:.2f}%, MDD: {m.mdd*100:.2f}%, Sharpe: {m.sharpe_ratio:.2f}")
+        print(
+            f"  누적: {m.total_return * 100:+.2f}%, CAGR: {m.cagr * 100:.2f}%, MDD: {m.mdd * 100:.2f}%, Sharpe: {m.sharpe_ratio:.2f}"
+        )
     print("=" * 60)
 
 
 if __name__ == "__main__":
     main()
-

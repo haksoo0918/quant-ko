@@ -1,10 +1,12 @@
 """Compare baseline vs Option A (Liquidity 50M) vs Option B (Quantile 30%) vs Option A+B."""
 
 import logging
-from quant_ko.data.store import DataStore
+
 from quant_ko.backtest.engine import BacktestEngine
+from quant_ko.data.store import DataStore
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+
 
 def run_experiment():
     store = DataStore("data/quant_ko.db")
@@ -47,26 +49,42 @@ def run_experiment():
         )
         res = engine.run(start_date=start_date, end_date=end_date)
         m = res.metrics
-        results.append({
-            "name": cfg["name"],
-            "cum_ret": m.total_return * 100,
-            "cagr": m.cagr * 100,
-            "mdd": m.mdd * 100,
-            "vol": m.annualized_volatility * 100,
-            "sharpe": m.sharpe_ratio,
-            "turnover": m.avg_turnover_rate * 100,
-            "final_equity": m.final_equity,
-            "records": res.rebalance_records,
-        })
+        results.append(
+            {
+                "name": cfg["name"],
+                "cum_ret": m.total_return * 100,
+                "cagr": m.cagr * 100,
+                "mdd": m.mdd * 100,
+                "vol": m.annualized_volatility * 100,
+                "sharpe": m.sharpe_ratio,
+                "turnover": m.avg_turnover_rate * 100,
+                "final_equity": m.final_equity,
+                "records": res.rebalance_records,
+            }
+        )
 
     # Summary Table
-    print("\n" + "="*95)
+    print("\n" + "=" * 95)
     print("4개 설정 비교 백테스트 결과 (2023-01-01 - 2026-10-07)")
-    print("="*95)
+    print("=" * 95)
     header = f"| {'전략 설정':<32} | {'누적수익률':<10} | {'CAGR':<8} | {'MDD':<8} | {'샤프':<6} | {'평균종목수':<8} |"
     print(header)
-    print("|" + "-"*34 + "|" + "-"*12 + "|" + "-"*10 + "|" + "-"*10 + "|" + "-"*8 + "|" + "-"*12 + "|")
-    
+    print(
+        "|"
+        + "-" * 34
+        + "|"
+        + "-" * 12
+        + "|"
+        + "-" * 10
+        + "|"
+        + "-" * 10
+        + "|"
+        + "-" * 8
+        + "|"
+        + "-" * 12
+        + "|"
+    )
+
     md_lines = [
         "# 소형주 퀀트 필터 완화 실험 비교 리포트 (2023 - 2026.10)\n",
         "| 전략 설정 | 누적수익률 | CAGR | MDD | 샤프 지수 | 평균 보유 종목수 | 최종 평가액 |",
@@ -80,13 +98,16 @@ def run_experiment():
         latest_count = counts[-1] if counts else 0
         line = f"| {r['name']:<32} | {r['cum_ret']:>9.2f}% | {r['cagr']:>7.2f}% | {r['mdd']:>7.2f}% | {r['sharpe']:>6.2f} | {avg_count:>4.1f}개 (최근{latest_count}개) |"
         print(line)
-        md_lines.append(f"| **{r['name']}** | **{r['cum_ret']:.2f}%** | {r['cagr']:.2f}% | {r['mdd']:.2f}% | {r['sharpe']:.2f} | {avg_count:.1f}개 (최근 {latest_count}개) | {r['final_equity']:,.0f}원 |")
+        md_lines.append(
+            f"| **{r['name']}** | **{r['cum_ret']:.2f}%** | {r['cagr']:.2f}% | {r['mdd']:.2f}% | {r['sharpe']:.2f} | {avg_count:.1f}개 (최근 {latest_count}개) | {r['final_equity']:,.0f}원 |"
+        )
 
     # Save to markdown report
     with open("docs/filter_comparison_result.md", "w", encoding="utf-8") as f:
         f.write("\n".join(md_lines) + "\n")
 
     print("\n결과 보고서 저장 완료: docs/filter_comparison_result.md")
+
 
 if __name__ == "__main__":
     run_experiment()

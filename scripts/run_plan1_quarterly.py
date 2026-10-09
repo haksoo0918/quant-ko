@@ -5,11 +5,13 @@
 """
 
 import logging
-from quant_ko.data.store import DataStore
+
 from quant_ko.backtest.engine import BacktestEngine
+from quant_ko.data.store import DataStore
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("run_plan1_quarterly")
+
 
 def main():
     store = DataStore("data/quant_ko.db")
@@ -43,9 +45,9 @@ def main():
         f"{int(total_fees):,}",
     )
 
-    print("\n" + "="*50)
+    print("\n" + "=" * 50)
     print(" [1안 분기 리밸런싱 (시총 20%, 거래대금 제한없음)] 결과 ")
-    print("="*50)
+    print("=" * 50)
     print(f"누적 수익률   : {m.total_return * 100:.2f}%")
     print(f"CAGR (연복리) : {m.cagr * 100:.2f}%")
     print(f"MDD (최대낙폭): {m.mdd * 100:.2f}%")
@@ -54,7 +56,8 @@ def main():
     print("\n연도별 수익률:")
     for yr, yret in sorted(m.yearly_returns.items()):
         print(f"  {yr}년: {yret * 100:+.2f}%")
-    print("="*50)
+    print("=" * 50)
+
 
 if __name__ == "__main__":
     main()

@@ -1,18 +1,20 @@
 """Quick data collection script for small-cap backtest."""
 
+import logging
 import os
 import sys
-import logging
-import pandas as pd
+
 import FinanceDataReader as fdr
+import pandas as pd
 from dotenv import load_dotenv
 
-from quant_ko.data.store import DataStore
 from quant_ko.data.collector import DataCollector
 from quant_ko.data.dart import DartClient
+from quant_ko.data.store import DataStore
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("run_quick_collection")
+
 
 def main():
     load_dotenv()
@@ -43,13 +45,15 @@ def main():
         marcap = float(row.get("Marcap") or 0)
         amt = float(row.get("Amount") or 0)
         if close > 0 and marcap > 0:
-            price_records.append({
-                "ticker": code,
-                "date": today_str,
-                "close": close,
-                "market_cap": marcap,
-                "trading_value": amt,
-            })
+            price_records.append(
+                {
+                    "ticker": code,
+                    "date": today_str,
+                    "close": close,
+                    "market_cap": marcap,
+                    "trading_value": amt,
+                }
+            )
     store.upsert_daily_prices(price_records)
 
     logger.info("3. 코스피/코스닥 시가총액 하위 20%% 소형주 풀 추출 중...")
@@ -79,6 +83,7 @@ def main():
         end_date="2024-12-31",
     )
     logger.info("데이터 수집 완료! DB 위치: %s", db_path)
+
 
 if __name__ == "__main__":
     main()

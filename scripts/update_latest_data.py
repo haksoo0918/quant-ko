@@ -6,15 +6,17 @@ Also updates CD rate ETF (357870) and KOSDAQ benchmark.
 """
 
 import logging
-import pandas as pd
+
 import FinanceDataReader as fdr
-from quant_ko.data.store import DataStore
+
 from quant_ko.data.krx import clean_price_val
+from quant_ko.data.store import DataStore
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("update_latest_data")
 
 TARGET_DATE = "2026-10-08"
+
 
 def main():
     store = DataStore("data/quant_ko.db")
@@ -53,18 +55,25 @@ def main():
             shares = shares_map.get(ticker, 0.0)
             market_cap = close * shares if shares > 0 else 0.0
 
-            records_to_save.append({
-                "ticker": ticker,
-                "date": TARGET_DATE,
-                "close": close,
-                "market_cap": market_cap,
-                "trading_value": trading_value,
-            })
+            records_to_save.append(
+                {
+                    "ticker": ticker,
+                    "date": TARGET_DATE,
+                    "close": close,
+                    "market_cap": market_cap,
+                    "trading_value": trading_value,
+                }
+            )
             success_count += 1
 
             if len(records_to_save) >= 50:
                 store.upsert_daily_prices(records_to_save)
-                logger.info("[%d/%d] Upserted %d records to DB...", idx, len(needed_tickers), len(records_to_save))
+                logger.info(
+                    "[%d/%d] Upserted %d records to DB...",
+                    idx,
+                    len(needed_tickers),
+                    len(records_to_save),
+                )
                 records_to_save = []
 
         except Exception as e:
@@ -82,7 +91,12 @@ def main():
     except Exception as e:
         logger.warning("Error updating CD daily prices: %s", e)
 
-    logger.info("Data update for %s completed! Successfully fetched: %d tickers.", TARGET_DATE, success_count)
+    logger.info(
+        "Data update for %s completed! Successfully fetched: %d tickers.",
+        TARGET_DATE,
+        success_count,
+    )
+
 
 if __name__ == "__main__":
     main()

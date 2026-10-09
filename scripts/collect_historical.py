@@ -1,18 +1,20 @@
 """Collect historical DART financial statements (2018~2021) and daily prices (2018~2021)."""
 
+import logging
 import os
 import sys
-import logging
-import pandas as pd
+
 import FinanceDataReader as fdr
+import pandas as pd
 from dotenv import load_dotenv
 
-from quant_ko.data.store import DataStore
 from quant_ko.data.collector import DataCollector
 from quant_ko.data.dart import DartClient
+from quant_ko.data.store import DataStore
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("collect_historical")
+
 
 def main():
     load_dotenv()
@@ -80,6 +82,7 @@ def main():
         end_date="2021-12-31",
     )
     logger.info("과거 데이터 수집 완료! DB 업데이트 완료.")
+
 
 if __name__ == "__main__":
     main()
