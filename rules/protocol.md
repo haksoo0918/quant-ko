@@ -49,3 +49,12 @@ All AI coding assistants and autonomous agents operating in this workspace must 
 ## 3. Fast-Track Exceptions
 - Minor styling tweaks, simple bug fixes, typos, and read-only searches bypass PRD updates and proceed immediately.
 
+---
+
+## 4. Batch & Long-Running Task Discipline (Anti-Hang Protocol)
+
+1. **Benchmark Before Full Run**: Before launching large batch jobs (scraping, heavy backtesting, ETL), run a micro-benchmark (5–10 samples) to measure throughput per unit and compute projected total duration (ETA).
+2. **Explicit Checkpoints & Timeout**: Never allow unattended background tasks. Set tight timeout checks and periodic progress checkpoints.
+3. **Bottleneck Detection & Fast-Halt**: If processing throughput degrades or will exceed reasonable operational limits, immediately halt execution, report root cause analysis, and propose architectural fixes (e.g., bulk APIs, concurrency) rather than idle waiting.
+
+

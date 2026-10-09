@@ -45,4 +45,5 @@ Before taking actions in specific domains, always consult the specialized guidel
 10. **Zero Autonomous Recovery**: In case of errors or user corrections, never attempt autonomous rollbacks or history mutations. Halt immediately, report status, and await instructions.
 11. **Deep Thinking on Directions**: Rigorously evaluate trade-offs, scalability, and edge cases across multiple angles rather than relying on surface-level intuition.
 12. **Ask Over Guessing**: Never guess unfamiliar domain rules or unverified APIs. Validate via official docs/MCP, and clarify ambiguities promptly via `ask_question`.
+13. **Execution Monitoring & Anti-Hang Discipline**: Never leave batch, collection, or long-running tasks unattended. Always run small sample benchmarks first to measure throughput and calculate ETA. Set explicit timeout checkpoints, actively monitor progress, detect bottlenecks early, and halt/report immediately if execution is unreasonably slow instead of idle waiting.
 
