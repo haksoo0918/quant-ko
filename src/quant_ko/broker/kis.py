@@ -94,17 +94,35 @@ class KisClient:
 
         self.base_url = MOCK_BASE_URL if self.is_mock else REAL_BASE_URL
         self.session = session or requests.Session()
+        self.token_cache_file = f"data/kis_token_{'mock' if self.is_mock else 'real'}.json"
 
         self._access_token: str | None = None
         self._token_expires_at: float = 0.0
 
     def get_access_token(self) -> str:
-        """Fetch or return cached OAuth access token."""
+        """Fetch or return cached OAuth access token (in-memory and file persistence)."""
         now = time.time()
-        # Keep 60 seconds buffer before expiry
+        # 1. Check in-memory cache
         if self._access_token and now < self._token_expires_at - 60:
             return self._access_token
 
+        # 2. Check file cache (KIS token is valid for 24 hours, limited to 1 request per minute)
+        import json
+
+        if os.path.exists(self.token_cache_file):
+            try:
+                with open(self.token_cache_file, encoding="utf-8") as f:
+                    cache_data = json.load(f)
+                cached_token = cache_data.get("access_token")
+                cached_expires = float(cache_data.get("expires_at", 0))
+                if cached_token and now < cached_expires - 60:
+                    self._access_token = cached_token
+                    self._token_expires_at = cached_expires
+                    return self._access_token
+            except Exception:
+                pass
+
+        # 3. Request new token from KIS API
         url = f"{self.base_url}/oauth2/tokenP"
         payload = {
             "grant_type": "client_credentials",
@@ -118,6 +136,17 @@ class KisClient:
         self._access_token = data["access_token"]
         expires_in = float(data.get("expires_in", 86400))
         self._token_expires_at = now + expires_in
+
+        # Persist to disk
+        try:
+            with open(self.token_cache_file, "w", encoding="utf-8") as f:
+                json.dump(
+                    {"access_token": self._access_token, "expires_at": self._token_expires_at},
+                    f,
+                )
+        except Exception:
+            pass
+
         return self._access_token
 
     def _get_headers(self, tr_id: str) -> dict[str, str]:
