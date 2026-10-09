@@ -56,22 +56,50 @@ class KisClient:
         app_key: str | None = None,
         app_secret: str | None = None,
         account_no: str | None = None,
-        is_mock: bool = True,
+        is_mock: bool | None = None,
         session: requests.Session | None = None,
     ) -> None:
-        self.app_key = app_key or os.getenv("KIS_APP_KEY", "")
-        self.app_secret = app_secret or os.getenv("KIS_APP_SECRET", "")
-        acc = account_no or os.getenv("KIS_ACCOUNT_NO", "")
-        self.is_mock = is_mock
+        # Determine mode if not explicitly passed
+        if is_mock is None:
+            mode = os.getenv("KIS_MODE", "MOCK").strip().upper()
+            self.is_mock = (mode != "REAL")
+        else:
+            self.is_mock = is_mock
 
-        # Parse account number (e.g. "12345678-01" or "1234567801")
+        # Prefix for dual env vars: KIS_MOCK_* vs KIS_REAL_*
+        prefix = "KIS_MOCK_" if self.is_mock else "KIS_REAL_"
+
+        self.app_key = (
+            app_key
+            or os.getenv(f"{prefix}APP_KEY")
+            or os.getenv("KIS_APP_KEY", "")
+        )
+        self.app_secret = (
+            app_secret
+            or os.getenv(f"{prefix}APP_SECRET")
+            or os.getenv("KIS_APP_SECRET", "")
+        )
+
+        acc = (
+            account_no
+            or os.getenv(f"{prefix}CANO")
+            or os.getenv(f"{prefix}ACCOUNT_NO")
+            or os.getenv("KIS_CANO")
+            or os.getenv("KIS_ACCOUNT_NO", "")
+        )
+        prdt = (
+            os.getenv(f"{prefix}ACNT_PRDT_CD")
+            or os.getenv("KIS_ACNT_PRDT_CD", "01")
+        )
+
+        # Parse account number (e.g. "12345678-01" or "1234567801" or "12345678")
         clean_acc = acc.replace("-", "").strip()
         if len(clean_acc) >= 10:
             self.account_prefix = clean_acc[:8]
             self.account_suffix = clean_acc[8:10]
         else:
             self.account_prefix = clean_acc
-            self.account_suffix = "01"
+            self.account_suffix = prdt.strip() or "01"
 
         self.base_url = MOCK_BASE_URL if self.is_mock else REAL_BASE_URL
         self.session = session or requests.Session()
