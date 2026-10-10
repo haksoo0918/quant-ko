@@ -107,3 +107,37 @@ def get_rebalance_schedule(
             )
 
     return events
+
+
+def get_cd_daily_return_series(
+    trading_days: Sequence[str],
+    csv_path: str = "data/cd_daily.csv",
+    fallback_annual_rate: float = 0.035,
+):
+    """Return daily return multiplier series for CD rate ETF proxy."""
+    import pandas as pd
+
+    try:
+        cd_df = pd.read_csv(csv_path, index_col=0, parse_dates=True)
+        cd_df.index = [d.strftime("%Y-%m-%d") for d in cd_df.index]
+        cd_close = cd_df["Close"].to_dict()
+    except Exception:
+        cd_close = {}
+
+    daily_ret = {}
+    prev_close = None
+    default_daily = fallback_annual_rate / 250.0
+
+    for d in trading_days:
+        if d in cd_close:
+            curr = cd_close[d]
+            if prev_close and prev_close > 0:
+                ret = (curr - prev_close) / prev_close
+            else:
+                ret = default_daily
+            prev_close = curr
+        else:
+            ret = default_daily
+        daily_ret[d] = ret
+
+    return pd.Series(daily_ret)

@@ -14,7 +14,7 @@ from datetime import datetime
 
 import pandas as pd
 
-from quant_ko.backtest.calendar import get_rebalance_schedule
+from quant_ko.backtest.calendar import get_cd_daily_return_series, get_rebalance_schedule
 from quant_ko.backtest.engine import EventTracker, Trade, execute_rebalance
 from quant_ko.backtest.metrics import calculate_metrics
 from quant_ko.data.krx import normalize_date
@@ -24,31 +24,6 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(me
 logger = logging.getLogger("compare_seasonality_vs_kospi")
 
 CACHE_FILE = "data/monthly_targets_cache.pkl"
-
-
-def get_cd_daily_return_series(trading_days: list[str]) -> pd.Series:
-    """Return daily return multiplier for CD rate proxy."""
-    try:
-        cd_df = pd.read_csv("data/cd_daily.csv", index_col=0, parse_dates=True)
-        cd_df.index = [d.strftime("%Y-%m-%d") for d in cd_df.index]
-        cd_close = cd_df["Close"].to_dict()
-    except Exception:
-        cd_close = {}
-
-    daily_ret = {}
-    prev_close = None
-    for d in trading_days:
-        if d in cd_close:
-            curr = cd_close[d]
-            if prev_close and prev_close > 0:
-                ret = (curr - prev_close) / prev_close
-            else:
-                ret = 0.035 / 250.0
-            prev_close = curr
-        else:
-            ret = 0.035 / 250.0
-        daily_ret[d] = ret
-    return pd.Series(daily_ret)
 
 
 def run_seasonality_strategy(

@@ -30,6 +30,7 @@ class LiveRebalancer:
         rebalance_freq: str = "quarterly",
         strategy_mode: str = "seasonality",
         cd_etf_ticker: str = CD_ETF_TICKER,
+        cost_rate: float = 0.003,
     ) -> None:
         self.store = store
         self.kis_client = kis_client
@@ -38,6 +39,7 @@ class LiveRebalancer:
         self.rebalance_freq = rebalance_freq
         self.strategy_mode = strategy_mode
         self.cd_etf_ticker = cd_etf_ticker
+        self.cost_rate = cost_rate
 
     def is_rebalance_date(self, date: str, trading_days: list[str]) -> bool:
         """Check if given date matches scheduled rebalancing date."""
@@ -143,12 +145,18 @@ class LiveRebalancer:
             held_positions.get(t, 0) * prices.get(t, 0.0) for t in held_positions
         )
 
-        # Calculate desired shares
+        # Calculate desired shares (with cost buffer)
         desired_target_shares: dict[str, int] = {}
         for ticker, weight in target_weights.items():
-            price = prices.get(ticker, 1.0)
+            price = prices.get(ticker, 0.0)
+            if price <= 0:
+                logger.warning(
+                    "종목 %s의 유효 가격이 없어(0원 이하) 매수 대상에서 제외합니다.", ticker
+                )
+                continue
+            cost_per_share = price * (1.0 + self.cost_rate)
             target_val = total_equity * weight
-            target_shares = math.floor(target_val / price)
+            target_shares = math.floor(target_val / cost_per_share)
             if target_shares > 0:
                 desired_target_shares[ticker] = target_shares
 
@@ -158,18 +166,19 @@ class LiveRebalancer:
 
         # Current holdings
         for ticker, held_qty in held_positions.items():
-            price = prices.get(ticker, 1.0)
+            price = prices.get(ticker, 0.0)
             target_qty = desired_target_shares.get(ticker, 0)
-            if target_qty < held_qty:
+            if target_qty < held_qty and price > 0:
                 sells.append((ticker, held_qty - target_qty, price))
-            elif target_qty > held_qty:
+            elif target_qty > held_qty and price > 0:
                 buys.append((ticker, target_qty - held_qty, price))
 
         # New target entries not currently held
         for ticker, target_qty in desired_target_shares.items():
             if ticker not in held_positions:
-                price = prices.get(ticker, 1.0)
-                buys.append((ticker, target_qty, price))
+                price = prices.get(ticker, 0.0)
+                if price > 0:
+                    buys.append((ticker, target_qty, price))
 
         executed_orders: list[dict[str, Any]] = []
         available_cash = current_cash
@@ -212,13 +221,17 @@ class LiveRebalancer:
                         "success": res_success,
                     }
                 )
-                available_cash += qty * price
+                net_proceeds = qty * price * (1.0 - self.cost_rate)
+                available_cash += net_proceeds
             except Exception as e:
                 logger.error("SELL order failed for %s: %s", ticker, e)
 
         # 5. Execute BUYs next
         for ticker, qty, price in buys:
-            max_buyable = math.floor(available_cash / price) if price > 0 else 0
+            if price <= 0:
+                continue
+            cost_per_share = price * (1.0 + self.cost_rate)
+            max_buyable = math.floor(available_cash / cost_per_share) if cost_per_share > 0 else 0
             buy_qty = min(qty, max_buyable)
             if buy_qty <= 0:
                 continue
@@ -259,7 +272,8 @@ class LiveRebalancer:
                         "success": res_success,
                     }
                 )
-                available_cash -= buy_qty * price
+                total_outlay = buy_qty * cost_per_share
+                available_cash -= total_outlay
             except Exception as e:
                 logger.error("BUY order failed for %s: %s", ticker, e)
 
