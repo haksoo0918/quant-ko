@@ -191,3 +191,59 @@ def test_kis_fetch_orders(kis_client):
         assert orders[0]["ticker"] == "005930"
         assert orders[0]["filled_qty"] == 10
         assert orders[0]["status"] == "FILLED"
+
+
+def test_kis_request_retry_success(kis_client):
+    """일시적 네트워크 에러 후 재시도로 성공하는 케이스 검증."""
+    import requests
+
+    success_resp = MagicMock()
+    success_resp.status_code = 200
+
+    # 1회차, 2회차 ConnectionError -> 3회차 성공
+    with patch.object(
+        kis_client.session,
+        "get",
+        side_effect=[
+            requests.ConnectionError("Connection reset"),
+            requests.Timeout("Read timeout"),
+            success_resp,
+        ],
+    ) as mock_get, patch("time.sleep") as mock_sleep:
+        resp = kis_client._request("GET", "https://mock.url", max_retries=3, backoff_factor=0.01)
+        assert resp == success_resp
+        assert mock_get.call_count == 3
+        assert mock_sleep.call_count == 2
+
+
+def test_kis_request_retry_exhausted(kis_client):
+    """최대 재시도(3회) 초과 시 예외를 전파하는지 검증."""
+    import requests
+
+    with patch.object(
+        kis_client.session,
+        "post",
+        side_effect=requests.ConnectionError("Network down"),
+    ) as mock_post, patch("time.sleep"):
+        import pytest
+
+        with pytest.raises(requests.ConnectionError):
+            kis_client._request("POST", "https://mock.url", max_retries=3, backoff_factor=0.01)
+        assert mock_post.call_count == 3
+
+
+def test_kis_request_no_retry_on_4xx(kis_client):
+    """4xx 클라이언트 에러는 재시도 없이 즉시 raise하는지 검증."""
+    import requests
+
+    mock_resp = MagicMock()
+    mock_resp.status_code = 400
+    err = requests.HTTPError(response=mock_resp)
+
+    with patch.object(kis_client.session, "get", side_effect=err) as mock_get, patch("time.sleep") as mock_sleep:
+        import pytest
+
+        with pytest.raises(requests.HTTPError):
+            kis_client._request("GET", "https://mock.url", max_retries=3)
+        assert mock_get.call_count == 1
+        mock_sleep.assert_not_called()

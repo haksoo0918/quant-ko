@@ -129,7 +129,7 @@ class KisClient:
             "appkey": self.app_key,
             "appsecret": self.app_secret,
         }
-        resp = self.session.post(url, json=payload)
+        resp = self._request("POST", url, json=payload)
         resp.raise_for_status()
         data = resp.json()
 
@@ -148,6 +148,57 @@ class KisClient:
             pass
 
         return self._access_token
+
+    def _request(
+        self,
+        method: str,
+        url: str,
+        max_retries: int = 3,
+        backoff_factor: float = 1.0,
+        **kwargs: Any,
+    ) -> requests.Response:
+        """Execute HTTP request with exponential backoff retry on network/server errors."""
+        attempt = 0
+        while True:
+            attempt += 1
+            try:
+                m = method.upper()
+                if m == "GET":
+                    resp = self.session.get(url, **kwargs)
+                elif m == "POST":
+                    resp = self.session.post(url, **kwargs)
+                else:
+                    resp = self.session.request(method=m, url=url, **kwargs)
+
+                if resp.status_code >= 500:
+                    resp.raise_for_status()
+                return resp
+            except (requests.ConnectionError, requests.Timeout, requests.HTTPError) as e:
+                # Do not retry 4xx client errors
+                if (
+                    isinstance(e, requests.HTTPError)
+                    and e.response is not None
+                    and 400 <= e.response.status_code < 500
+                ):
+                    raise
+                if attempt >= max_retries:
+                    logger.error(
+                        "KIS API request failed after %d attempts: %s %s - %s",
+                        attempt,
+                        method,
+                        url,
+                        e,
+                    )
+                    raise
+                sleep_sec = backoff_factor * (2 ** (attempt - 1))
+                logger.warning(
+                    "KIS API request failed (attempt %d/%d): %s. Retrying in %.1fs...",
+                    attempt,
+                    max_retries,
+                    e,
+                    sleep_sec,
+                )
+                time.sleep(sleep_sec)
 
     def _get_headers(self, tr_id: str) -> dict[str, str]:
         """Construct standard API request headers."""
@@ -168,7 +219,7 @@ class KisClient:
             "FID_COND_MRKT_DIV_CODE": "J",
             "FID_INPUT_ISCD": ticker,
         }
-        resp = self.session.get(url, headers=headers, params=params)
+        resp = self._request("GET", url, headers=headers, params=params)
         resp.raise_for_status()
         data = resp.json()
 
@@ -194,7 +245,7 @@ class KisClient:
             "CTX_AREA_FK100": "",
             "CTX_AREA_NK100": "",
         }
-        resp = self.session.get(url, headers=headers, params=params)
+        resp = self._request("GET", url, headers=headers, params=params)
         resp.raise_for_status()
         data = resp.json()
 
@@ -251,7 +302,7 @@ class KisClient:
             "ORD_QTY": str(qty),
             "ORD_UNPR": order_price_str,
         }
-        resp = self.session.post(url, headers=headers, json=body)
+        resp = self._request("POST", url, headers=headers, json=body)
         resp.raise_for_status()
         data = resp.json()
 
@@ -291,7 +342,7 @@ class KisClient:
             "CTX_AREA_FK100": "",
             "CTX_AREA_NK100": "",
         }
-        resp = self.session.get(url, headers=headers, params=params)
+        resp = self._request("GET", url, headers=headers, params=params)
         resp.raise_for_status()
         data = resp.json()
 
