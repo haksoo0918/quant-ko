@@ -77,6 +77,3 @@ node_modules/
 # Antigravity temporary agent files
 scratch/
 .system_generated/
-
-# Personal task queue
-TODO.md
