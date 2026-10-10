@@ -109,6 +109,12 @@ def main() -> None:
         default="seasonality",
         help="Strategy mode: seasonality (Strategy 1) or standard",
     )
+    parser.add_argument(
+        "--order-type",
+        choices=["01", "00"],
+        default="01",
+        help="Order division: '01' (market order / 시장가 15:20 동시호가 100%% 체결, default) or '00' (limit order / 지정가)",
+    )
 
     args = parser.parse_args()
     target_date = args.date or get_current_date()
@@ -147,6 +153,7 @@ def main() -> None:
             notifier=notifier,
             env=args.env,
             strategy_mode=args.strategy,
+            order_type=args.order_type,
         )
         logger.info("Executing rebalance on %s (Dry-run: %s)...", target_date, args.dry_run)
         res = rebalancer.execute(

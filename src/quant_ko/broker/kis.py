@@ -228,9 +228,10 @@ class KisClient:
         ticker: str,
         side: str,
         qty: int,
-        price: float,
+        price: float = 0.0,
+        order_type: str = "01",  # "01": 시장가 (15:20 동시호가 100% 체결), "00": 지정가
     ) -> OrderResult:
-        """Place cash BUY / SELL limit order (지정가 00)."""
+        """Place cash BUY / SELL order (01: 시장가, 00: 지정가)."""
         side_upper = side.upper()
         if side_upper == "BUY":
             tr_id = "VTTC0802U" if self.is_mock else "TTTC0802U"
@@ -241,13 +242,14 @@ class KisClient:
 
         url = f"{self.base_url}/uapi/domestic-stock/v1/trading/order-cash"
         headers = self._get_headers(tr_id=tr_id)
+        order_price_str = "0" if order_type == "01" else str(int(price))
         body = {
             "CANO": self.account_prefix,
             "ACNT_PRDT_CD": self.account_suffix,
             "PDNO": ticker,
-            "ORD_DVSN": "00",  # Limit order
+            "ORD_DVSN": order_type,
             "ORD_QTY": str(qty),
-            "ORD_UNPR": str(int(price)),
+            "ORD_UNPR": order_price_str,
         }
         resp = self.session.post(url, headers=headers, json=body)
         resp.raise_for_status()

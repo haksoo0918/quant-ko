@@ -158,7 +158,7 @@ def test_rebalancer_differential_orders_execution(store):
     # Order place mock
     order_counter = [0]
 
-    def mock_place_order(ticker, side, qty, price):
+    def mock_place_order(ticker, side, qty, price, order_type="01"):
         order_counter[0] += 1
         return OrderResult(
             order_no=f"ORD{order_counter[0]:05d}",

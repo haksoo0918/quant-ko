@@ -31,6 +31,7 @@ class LiveRebalancer:
         strategy_mode: str = "seasonality",
         cd_etf_ticker: str = CD_ETF_TICKER,
         cost_rate: float = 0.003,
+        order_type: str = "01",
     ) -> None:
         self.store = store
         self.kis_client = kis_client
@@ -40,6 +41,7 @@ class LiveRebalancer:
         self.strategy_mode = strategy_mode
         self.cd_etf_ticker = cd_etf_ticker
         self.cost_rate = cost_rate
+        self.order_type = order_type
 
     def is_rebalance_date(self, date: str, trading_days: list[str]) -> bool:
         """Check if given date matches scheduled rebalancing date."""
@@ -191,7 +193,11 @@ class LiveRebalancer:
                     order_no = f"DRY_SELL_{ticker}"
                 else:
                     res = self.kis_client.place_order(
-                        ticker=ticker, side="SELL", qty=qty, price=price
+                        ticker=ticker,
+                        side="SELL",
+                        qty=qty,
+                        price=price,
+                        order_type=self.order_type,
                     )
                     res_success = res.success
                     order_no = res.order_no
@@ -242,7 +248,11 @@ class LiveRebalancer:
                     order_no = f"DRY_BUY_{ticker}"
                 else:
                     res = self.kis_client.place_order(
-                        ticker=ticker, side="BUY", qty=buy_qty, price=price
+                        ticker=ticker,
+                        side="BUY",
+                        qty=buy_qty,
+                        price=price,
+                        order_type=self.order_type,
                     )
                     res_success = res.success
                     order_no = res.order_no

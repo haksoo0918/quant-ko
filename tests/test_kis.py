@@ -127,12 +127,13 @@ def test_kis_place_order_buy_and_sell(kis_client):
     }
 
     with patch.object(kis_client.session, "post", return_value=mock_resp) as mock_post:
-        # BUY
+        # BUY (Default Market Order "01")
         res_buy: OrderResult = kis_client.place_order(
             ticker="005930",
             side="BUY",
             qty=10,
             price=55000,
+            order_type="01",
         )
         assert res_buy.success is True
         assert res_buy.order_no == "0000123456"
@@ -140,21 +141,26 @@ def test_kis_place_order_buy_and_sell(kis_client):
         assert res_buy.qty == 10
         assert res_buy.price == 55000.0
 
-        # Check TR_ID for mock BUY
+        # Check TR_ID and Body for Market Order
         args, kwargs = mock_post.call_args
         assert kwargs["headers"]["tr_id"] == "VTTC0802U"
+        assert kwargs["json"]["ORD_DVSN"] == "01"
+        assert kwargs["json"]["ORD_UNPR"] == "0"
 
-        # SELL
+        # SELL (Limit Order "00")
         res_sell: OrderResult = kis_client.place_order(
             ticker="005930",
             side="SELL",
             qty=5,
             price=56000,
+            order_type="00",
         )
         assert res_sell.success is True
         assert res_sell.side == "SELL"
         args, kwargs = mock_post.call_args
         assert kwargs["headers"]["tr_id"] == "VTTC0801U"
+        assert kwargs["json"]["ORD_DVSN"] == "00"
+        assert kwargs["json"]["ORD_UNPR"] == "56000"
 
 
 def test_kis_fetch_orders(kis_client):
