@@ -1,5 +1,6 @@
 import os
 import sqlite3
+
 import pandas as pd
 from dotenv import load_dotenv
 
@@ -14,11 +15,13 @@ if os.path.exists(db_path):
     print(f"DB 파일 정상 존재: {db_path} ({size_mb:.2f} MB)")
     conn = sqlite3.connect(db_path)
     cur = conn.cursor()
-    tables = [r[0] for r in cur.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()]
+    tables = [
+        r[0] for r in cur.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
+    ]
     for t in tables:
         cnt = cur.execute(f"SELECT count(*) FROM {t}").fetchone()[0]
         print(f"  - [{t}] 테이블: {cnt:,} 행 적재됨")
-    
+
     latest_p = cur.execute("SELECT max(date) FROM daily_prices").fetchone()[0]
     first_p = cur.execute("SELECT min(date) FROM daily_prices").fetchone()[0]
     print(f"  - 일별 시세 기간: {first_p} ~ {latest_p}")
@@ -48,8 +51,12 @@ mock_cano = os.getenv("KIS_MOCK_CANO")
 dart_key = os.getenv("OPENDART_API_KEY")
 webhook = os.getenv("DISCORD_WEBHOOK_URL")
 
-print(f"실전 API 키: {'정상 등록됨' if real_key else '미등록'} (계좌: {real_cano[:4] + '****' if real_cano else '미입력'})")
-print(f"모의 API 키: {'정상 등록됨' if mock_key else '미등록'} (계좌: {mock_cano[:4] + '****' if mock_cano else '미입력'})")
+print(
+    f"실전 API 키: {'정상 등록됨' if real_key else '미등록'} (계좌: {real_cano[:4] + '****' if real_cano else '미입력'})"
+)
+print(
+    f"모의 API 키: {'정상 등록됨' if mock_key else '미등록'} (계좌: {mock_cano[:4] + '****' if mock_cano else '미입력'})"
+)
 print(f"OpenDART 키: {'정상 등록됨' if dart_key else '미등록'}")
 print(f"디스코드 웹훅: {'정상 등록됨' if webhook else '미등록'}")
 print("=" * 50)

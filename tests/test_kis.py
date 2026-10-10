@@ -6,13 +6,15 @@ from quant_ko.broker.kis import Balance, KisClient, OrderResult, Position
 
 
 @pytest.fixture
-def kis_client():
-    return KisClient(
+def kis_client(tmp_path):
+    client = KisClient(
         app_key="test_app_key",
         app_secret="test_app_secret",
         account_no="12345678-01",
         is_mock=True,
     )
+    client.token_cache_file = str(tmp_path / "test_token.json")
+    return client
 
 
 def test_kis_init_base_urls():

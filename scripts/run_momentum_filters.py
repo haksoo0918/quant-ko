@@ -78,7 +78,10 @@ def run_simulation(
     cost_rate: float = 0.003,
 ) -> dict:
     events = get_rebalance_schedule(
-        trading_days, start_date="2019-01-01", end_date="2026-10-07", rebalance_freq="monthly"
+        trading_days,
+        start_date=trading_days[0],
+        end_date=trading_days[-1],
+        rebalance_freq="monthly",
     )
     reb_date_map = {e.rebalance_date: e for e in events}
 
@@ -300,7 +303,7 @@ def main():
 
     prices_all = store.get_daily_prices()
     all_trading_days = sorted(prices_all["date"].dropna().unique().tolist())
-    trading_days = [d for d in all_trading_days if "2019-01-01" <= d <= "2026-10-07"]
+    trading_days = [d for d in all_trading_days if "2016-04-01" <= d <= "2026-10-08"]
 
     companies_df = store.get_companies()
     kosdaq_df = pd.read_csv("data/kq11_daily.csv", index_col=0, parse_dates=True)
@@ -333,14 +336,14 @@ def main():
         results.append(res)
 
     md_lines = [
-        "# 소형주 성장 가치 퀀트: 모멘텀/계절성 필터링 전략 비교 리포트 (2019 - 2026.10)\n",
+        "# 소형주 성장 가치 퀀트: 모멘텀/계절성 필터링 전략 10.5개년 종합 비교 리포트 (2016.04 - 2026.10)\n",
         "## 전략 개요 및 가설\n",
         "- **0. 기준 전략**: 1안 팩터(시총 하위 20%, 거래대금 제한 없음) 매월 말일 100% 주식 투자",
         "- **1. 계절성 필터**: 11-4월(6개월) 100% 주식, 5-10월(6개월) 100% CD금리 ETF 안전자산 대피",
         "- **2-A. 코스닥 60일 이평**: 매월 말일 코스닥 종가 >= 60일선이면 주식, 미만이면 CD금리 ETF",
         "- **2-B. 코스닥 200일 이평**: 매월 말일 코스닥 종가 >= 200일선이면 주식, 미만이면 CD금리 ETF",
         "- **3. 자체 자산곡선 60일 이평**: 전략 자체 가상 지수 >= 60일 SMA면 주식, 하회 시 CD금리 ETF 대피\n",
-        "### 종합 성과 비교 요약표\n",
+        "### 종합 성과 비교 요약표 (10.5개년: 2016.04 - 2026.10)\n",
         "| 전략 구분 | 누적 수익률 | CAGR (연복리) | MDD (최대낙폭) | 샤프지수 | 연간 승률 | 리밸런싱 승률 | 총 거래비용 |",
         "|:---|:---:|:---:|:---:|:---:|:---:|:---:|:---:|",
     ]
@@ -366,9 +369,13 @@ def main():
             row.append(f"{yret * 100:+.2f}%")
         md_lines.append("| " + " | ".join(row) + " |")
 
-    output_path = "docs/momentum_filters_backtest_result.md"
-    with open(output_path, "w", encoding="utf-8") as f:
-        f.write("\n".join(md_lines))
+    content_str = "\n".join(md_lines)
+    for p in [
+        "docs/momentum_filters_backtest_result.md",
+        "docs/momentum_filters_10year_backtest_result.md",
+    ]:
+        with open(p, "w", encoding="utf-8") as f:
+            f.write(content_str)
 
     print("\n" + "=" * 60)
     print(" 모멘텀 필터링 종합 비교 리포트 생성 완료! ")

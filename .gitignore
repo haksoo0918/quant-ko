@@ -56,6 +56,9 @@ htmlcov/
 *.db
 *.sqlite
 *.sqlite3
+data/*.pkl
+data/*.json
+data/*.csv
 data/raw/
 data/cache/
 

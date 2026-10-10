@@ -7,16 +7,19 @@ Checkpoints per batch and skips already collected tickers.
 
 import logging
 import time
+
 import FinanceDataReader as fdr
 import pandas as pd
-from quant_ko.data.store import DataStore
+
 from quant_ko.data.krx import clean_price_val
+from quant_ko.data.store import DataStore
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("collect_prices_2015_2017")
 
 START_DATE = "2015-01-01"
 END_DATE = "2017-12-31"
+
 
 def main():
     store = DataStore("data/quant_ko.db")
@@ -41,7 +44,11 @@ def main():
         if existing.empty or len(existing) < 600:
             needed_tickers.append(t)
 
-    logger.info("Tickers needing price collection for 2015-2017: %d / %d", len(needed_tickers), total_tickers)
+    logger.info(
+        "Tickers needing price collection for 2015-2017: %d / %d",
+        len(needed_tickers),
+        total_tickers,
+    )
     if not needed_tickers:
         logger.info("All 2015-2017 prices already collected!")
         return
@@ -57,7 +64,12 @@ def main():
     dur = time.time() - t0
     rate = 10.0 / max(dur, 0.001)
     eta_sec = len(needed_tickers) / rate
-    logger.info("Benchmark complete: 10 tickers in %.2fs (%.2f tickers/sec). ETA: ~%.1f minutes", dur, rate, eta_sec / 60.0)
+    logger.info(
+        "Benchmark complete: 10 tickers in %.2fs (%.2f tickers/sec). ETA: ~%.1f minutes",
+        dur,
+        rate,
+        eta_sec / 60.0,
+    )
 
     # Run collection with batch saving
     saved_total = 0
@@ -74,19 +86,28 @@ def main():
                     volume = clean_price_val(row.get("Volume"))
                     tv = clean_price_val(row.get("Amount", volume * close))
                     mcap = close * sh if sh > 0 else 0.0
-                    batch_records.append({
-                        "ticker": ticker,
-                        "date": pd.to_datetime(dt).strftime("%Y-%m-%d"),
-                        "close": close,
-                        "market_cap": mcap,
-                        "trading_value": tv,
-                    })
+                    batch_records.append(
+                        {
+                            "ticker": ticker,
+                            "date": pd.to_datetime(dt).strftime("%Y-%m-%d"),
+                            "close": close,
+                            "market_cap": mcap,
+                            "trading_value": tv,
+                        }
+                    )
 
             if len(batch_records) >= 5000:
                 store.upsert_daily_prices(batch_records)
                 saved_total += len(batch_records)
                 elapsed = time.time() - t_start
-                logger.info("[%d/%d] Saved %d price records (Total: %d, Elapsed: %.1fs)...", idx, len(needed_tickers), len(batch_records), saved_total, elapsed)
+                logger.info(
+                    "[%d/%d] Saved %d price records (Total: %d, Elapsed: %.1fs)...",
+                    idx,
+                    len(needed_tickers),
+                    len(batch_records),
+                    saved_total,
+                    elapsed,
+                )
                 batch_records = []
 
         except Exception as e:
@@ -106,6 +127,7 @@ def main():
         logger.warning("Error updating KQ11: %s", e)
 
     logger.info("Price collection complete! Total saved: %d records.", saved_total)
+
 
 if __name__ == "__main__":
     main()

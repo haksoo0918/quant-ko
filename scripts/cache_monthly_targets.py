@@ -26,8 +26,8 @@ def main():
     all_trading_days = sorted(prices_all["date"].dropna().unique().tolist())
     events = get_rebalance_schedule(
         all_trading_days,
-        start_date="2019-01-01",
-        end_date="2026-10-07",
+        start_date="2016-04-01",
+        end_date="2026-10-08",
         rebalance_freq="monthly",
     )
 

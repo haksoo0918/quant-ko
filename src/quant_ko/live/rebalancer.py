@@ -15,8 +15,11 @@ from quant_ko.strategy.universe import filter_universe
 logger = logging.getLogger(__name__)
 
 
+CD_ETF_TICKER = "459580"  # KODEX CD금리액티브(합성)
+
+
 class LiveRebalancer:
-    """Executes quarterly rebalancing orders via KIS Open API."""
+    """Executes rebalancing orders via KIS Open API."""
 
     def __init__(
         self,
@@ -25,12 +28,16 @@ class LiveRebalancer:
         notifier: DiscordNotifier | None = None,
         env: str = "mock",
         rebalance_freq: str = "quarterly",
+        strategy_mode: str = "seasonality",
+        cd_etf_ticker: str = CD_ETF_TICKER,
     ) -> None:
         self.store = store
         self.kis_client = kis_client
         self.notifier = notifier
         self.env = env
         self.rebalance_freq = rebalance_freq
+        self.strategy_mode = strategy_mode
+        self.cd_etf_ticker = cd_etf_ticker
 
     def is_rebalance_date(self, date: str, trading_days: list[str]) -> bool:
         """Check if given date matches scheduled rebalancing date."""
@@ -44,58 +51,92 @@ class LiveRebalancer:
         rebalance_date: str,
         pit_date: str | None = None,
         universe_kwargs: dict[str, Any] | None = None,
+        dry_run: bool = False,
     ) -> dict[str, Any]:
-        """Execute quarterly rebalancing.
+        """Execute rebalancing.
 
         1. Inquires current cash balance and held positions from broker.
-        2. Filters strategy universe and scores stocks to get target 20 equal-weighted portfolio.
+        2. Filters strategy universe and scores stocks to get target portfolio.
+           - In seasonality mode:
+             - 5~10월: 100% CD금리 ETF (459580) 안전 파킹
+             - 11~4월: 소형주 9대 팩터 20종목 동일비중 (각 5%)
         3. Computes differential orders (sell overweight/unwanted first, buy underweight/new next).
-        4. Submits limit orders at current 15:20 auction prices.
+        4. Submits limit orders at current 15:20 auction prices (or simulates if dry_run=True).
         5. Logs orders to SQLite database.
         6. Sends Discord summary notification.
         """
         norm_reb_date = normalize_date(rebalance_date)
         norm_pit_date = normalize_date(pit_date) if pit_date else norm_reb_date
 
-        logger.info("Starting rebalance on %s (PIT date: %s)", norm_reb_date, norm_pit_date)
+        logger.info(
+            "Starting rebalance on %s (PIT date: %s, mode: %s, dry_run: %s)",
+            norm_reb_date,
+            norm_pit_date,
+            self.strategy_mode,
+            dry_run,
+        )
 
         # 1. Broker balance & positions
         balance = self.kis_client.fetch_balance()
         current_cash = balance.cash
         held_positions = {p.ticker: p.qty for p in balance.positions if p.qty > 0}
 
-        # 2. Strategy selection
-        u_kwargs = universe_kwargs or {}
-        universe_df = filter_universe(self.store, as_of_date=norm_pit_date, **u_kwargs)
-        if universe_df.empty:
-            msg = f"Universe is empty on PIT date {norm_pit_date}. Rebalancing aborted."
-            logger.warning(msg)
-            if self.notifier:
-                self.notifier.send_text(f"[리밸런싱 경고] {msg}")
-            return {"success": False, "message": msg, "orders": []}
+        # 2. Determine target weights based on strategy mode
+        from datetime import datetime
 
-        selected_df = score_and_select(universe_df, top_n=20)
-        if selected_df.empty:
-            msg = f"No stocks selected on PIT date {norm_pit_date}. Rebalancing aborted."
-            logger.warning(msg)
-            if self.notifier:
-                self.notifier.send_text(f"[리밸런싱 경고] {msg}")
-            return {"success": False, "message": msg, "orders": []}
+        dt = datetime.strptime(norm_reb_date, "%Y-%m-%d")
+        is_parking_period = self.strategy_mode == "seasonality" and dt.month in [5, 6, 7, 8, 9, 10]
 
-        target_weights = dict(zip(selected_df["ticker"], selected_df["weight"], strict=False))
+        target_weights: dict[str, float] = {}
+        if is_parking_period:
+            # Safe parking: 100% CD rate ETF
+            logger.info(
+                "Seasonality mode active: 5~10월 파킹 구간이므로 CD금리 ETF(%s) 100%% 배분",
+                self.cd_etf_ticker,
+            )
+            target_weights = {self.cd_etf_ticker: 1.0}
+        else:
+            # Active equity period (11~4월) or standard mode
+            u_kwargs = {"min_trading_value": 0.0}
+            if universe_kwargs:
+                u_kwargs.update(universe_kwargs)
+            universe_df = filter_universe(self.store, as_of_date=norm_pit_date, **u_kwargs)
+            if universe_df.empty:
+                msg = f"Universe is empty on PIT date {norm_pit_date}. Rebalancing aborted."
+                logger.warning(msg)
+                if self.notifier:
+                    self.notifier.send_text(f"[리밸런싱 경고] {msg}")
+                return {"success": False, "message": msg, "orders": []}
 
-        # 3. Collect current prices
+            selected_df = score_and_select(universe_df, top_n=20)
+            if selected_df.empty:
+                msg = f"No stocks selected on PIT date {norm_pit_date}. Rebalancing aborted."
+                logger.warning(msg)
+                if self.notifier:
+                    self.notifier.send_text(f"[리밸런싱 경고] {msg}")
+                return {"success": False, "message": msg, "orders": []}
+
+            target_weights = dict(zip(selected_df["ticker"], selected_df["weight"], strict=False))
+
+        # 3. Collect current prices (Broker live price -> DataStore DB close fallback)
         all_tickers = set(held_positions.keys()).union(target_weights.keys())
         prices: dict[str, float] = {}
         for ticker in all_tickers:
+            price = 0.0
             try:
                 price = self.kis_client.fetch_current_price(ticker)
-                if price <= 0:
-                    price = 1.0
-                prices[ticker] = price
-            except Exception as e:
-                logger.error("Failed to fetch price for %s: %s", ticker, e)
-                prices[ticker] = 1.0
+            except Exception:
+                pass
+
+            # Fallback to local DataStore daily close if broker fails (e.g. outside trading hours)
+            if price <= 0:
+                p_df = self.store.get_daily_prices(ticker=ticker)
+                if not p_df.empty:
+                    price = float(p_df["close"].iloc[-1])
+
+            if price <= 0:
+                price = 1.0
+            prices[ticker] = price
 
         # Total portfolio equity
         total_equity = current_cash + sum(
@@ -136,7 +177,16 @@ class LiveRebalancer:
         # 4. Execute SELLs first
         for ticker, qty, price in sells:
             try:
-                res = self.kis_client.place_order(ticker=ticker, side="SELL", qty=qty, price=price)
+                if dry_run:
+                    res_success = True
+                    order_no = f"DRY_SELL_{ticker}"
+                else:
+                    res = self.kis_client.place_order(
+                        ticker=ticker, side="SELL", qty=qty, price=price
+                    )
+                    res_success = res.success
+                    order_no = res.order_no
+
                 order_id = self.store.insert_order(
                     {
                         "rebalance_date": norm_reb_date,
@@ -144,20 +194,22 @@ class LiveRebalancer:
                         "side": "SELL",
                         "qty": qty,
                         "price": price,
-                        "status": "ORDERED" if res.success else "FAILED",
-                        "filled_qty": 0,
+                        "status": "DRY_RUN"
+                        if dry_run
+                        else ("ORDERED" if res_success else "FAILED"),
+                        "filled_qty": qty if dry_run else 0,
                         "env": self.env,
                     }
                 )
                 executed_orders.append(
                     {
                         "id": order_id,
-                        "order_no": res.order_no,
+                        "order_no": order_no,
                         "ticker": ticker,
                         "side": "SELL",
                         "qty": qty,
                         "price": price,
-                        "success": res.success,
+                        "success": res_success,
                     }
                 )
                 available_cash += qty * price
@@ -166,16 +218,22 @@ class LiveRebalancer:
 
         # 5. Execute BUYs next
         for ticker, qty, price in buys:
-            # Check cash availability
             max_buyable = math.floor(available_cash / price) if price > 0 else 0
             buy_qty = min(qty, max_buyable)
             if buy_qty <= 0:
                 continue
 
             try:
-                res = self.kis_client.place_order(
-                    ticker=ticker, side="BUY", qty=buy_qty, price=price
-                )
+                if dry_run:
+                    res_success = True
+                    order_no = f"DRY_BUY_{ticker}"
+                else:
+                    res = self.kis_client.place_order(
+                        ticker=ticker, side="BUY", qty=buy_qty, price=price
+                    )
+                    res_success = res.success
+                    order_no = res.order_no
+
                 order_id = self.store.insert_order(
                     {
                         "rebalance_date": norm_reb_date,
@@ -183,20 +241,22 @@ class LiveRebalancer:
                         "side": "BUY",
                         "qty": buy_qty,
                         "price": price,
-                        "status": "ORDERED" if res.success else "FAILED",
-                        "filled_qty": 0,
+                        "status": "DRY_RUN"
+                        if dry_run
+                        else ("ORDERED" if res_success else "FAILED"),
+                        "filled_qty": buy_qty if dry_run else 0,
                         "env": self.env,
                     }
                 )
                 executed_orders.append(
                     {
                         "id": order_id,
-                        "order_no": res.order_no,
+                        "order_no": order_no,
                         "ticker": ticker,
                         "side": "BUY",
                         "qty": buy_qty,
                         "price": price,
-                        "success": res.success,
+                        "success": res_success,
                     }
                 )
                 available_cash -= buy_qty * price
@@ -207,6 +267,7 @@ class LiveRebalancer:
         if self.notifier:
             sell_count = sum(1 for o in executed_orders if o["side"] == "SELL")
             buy_count = sum(1 for o in executed_orders if o["side"] == "BUY")
+            mode_tag = "[모의 실행 (Dry-Run)]" if dry_run else "[리밸런싱 완료]"
             fields = [
                 {"name": "총 주문 수", "value": f"{len(executed_orders)}건", "inline": True},
                 {
@@ -214,13 +275,17 @@ class LiveRebalancer:
                     "value": f"매도 {sell_count}건 / 매수 {buy_count}건",
                     "inline": True,
                 },
-                {"name": "운용 환경", "value": self.env.upper(), "inline": True},
+                {
+                    "name": "운용 환경",
+                    "value": f"{self.env.upper()}{' (DRY-RUN)' if dry_run else ''}",
+                    "inline": True,
+                },
             ]
             self.notifier.send_embed(
-                title=f"📈 [리밸런싱 완료] {norm_reb_date}",
+                title=f"📈 {mode_tag} {norm_reb_date}",
                 description=f"포트폴리오 총 평가액: {int(total_equity):,}원\n주문 전송이 완료되었습니다.",
                 fields=fields,
-                color=0x2ECC71,  # Emerald Green
+                color=0x3498DB if dry_run else 0x2ECC71,
             )
 
         return {
