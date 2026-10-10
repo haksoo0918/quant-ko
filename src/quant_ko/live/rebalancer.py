@@ -15,7 +15,7 @@ from quant_ko.strategy.universe import filter_universe
 logger = logging.getLogger(__name__)
 
 
-CD_ETF_TICKER = "459580"  # KODEX CD금리액티브(합성)
+CD_ETF_TICKER = "357870"  # TIGER CD금리투자KIS(합성) - 1주당 약 53,000원으로 소액 시드 단주 최소화
 
 
 class LiveRebalancer:
@@ -62,7 +62,7 @@ class LiveRebalancer:
         1. Inquires current cash balance and held positions from broker.
         2. Filters strategy universe and scores stocks to get target portfolio.
            - In seasonality mode:
-             - 5~10월: 100% CD금리 ETF (459580) 안전 파킹
+             - 5~10월: 100% CD금리 ETF (357870) 안전 파킹
              - 11~4월: 소형주 9대 팩터 20종목 동일비중 (각 5%)
         3. Computes differential orders (sell overweight/unwanted first, buy underweight/new next).
         4. Submits limit orders at current 15:20 auction prices (or simulates if dry_run=True).

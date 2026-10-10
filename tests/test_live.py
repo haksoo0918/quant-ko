@@ -203,6 +203,57 @@ def test_rebalancer_differential_orders_execution(store):
     assert len(notifier.sent_messages) > 0
 
 
+def test_rebalancer_seasonality_parking_period(store):
+    """5~10월 파킹 구간 리밸런싱 시 TIGER CD금리(357870) 100% 매수 주문 검증."""
+    notifier = DiscordNotifier(mock_mode=True)
+    kis_mock = MagicMock(spec=KisClient)
+
+    # Balance: 2,000,000 KRW cash, no holdings
+    kis_mock.fetch_balance.return_value = Balance(
+        cash=2_000_000.0,
+        total_eval_amount=2_000_000.0,
+        positions=[],
+    )
+    # TIGER CD ETF price: 53,000 KRW
+    kis_mock.fetch_current_price.return_value = 53000.0
+
+    order_counter = [0]
+
+    def mock_place_order(ticker, side, qty, price, order_type="01"):
+        order_counter[0] += 1
+        return OrderResult(
+            order_no=f"ORD_PARK_{order_counter[0]:05d}",
+            ticker=ticker,
+            side=side,
+            qty=qty,
+            price=price,
+            success=True,
+            message="OK",
+        )
+
+    kis_mock.place_order.side_effect = mock_place_order
+
+    rebalancer = LiveRebalancer(
+        store=store,
+        kis_client=kis_mock,
+        notifier=notifier,
+        env="mock",
+        strategy_mode="seasonality",
+    )
+
+    result = rebalancer.execute(
+        rebalance_date="2026-05-29",  # May -> Parking period
+    )
+
+    assert result["success"] is True
+    assert len(result["orders"]) == 1
+    order = result["orders"][0]
+    assert order["ticker"] == "357870"
+    assert order["side"] == "BUY"
+    # 2,000,000 / (53000 * 1.003) = ~37 shares
+    assert order["qty"] >= 35
+
+
 def test_rebalancer_retry_unfilled_orders(store):
     notifier = DiscordNotifier(mock_mode=True)
     kis_mock = MagicMock(spec=KisClient)
