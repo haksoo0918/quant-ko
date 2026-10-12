@@ -235,7 +235,7 @@ class KisClient:
         params = {
             "CANO": self.account_prefix,
             "ACNT_PRDT_CD": self.account_suffix,
-            "AFHR_FLG": "N",
+            "AFHR_FLPR_YN": "N",
             "OFL_YN": "",
             "INQR_DVSN": "02",
             "UNPR_DVSN": "01",
@@ -248,6 +248,11 @@ class KisClient:
         resp = self._request("GET", url, headers=headers, params=params)
         resp.raise_for_status()
         data = resp.json()
+
+        if data.get("rt_cd") != "0":
+            msg = data.get("msg1", "Unknown broker error")
+            logger.error("KIS balance inquiry failed: rt_cd=%s, msg=%s", data.get("rt_cd"), msg)
+            raise RuntimeError(f"KIS balance inquiry error: {msg}")
 
         # Parse positions (output1)
         positions: list[Position] = []
