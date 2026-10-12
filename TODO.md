@@ -10,6 +10,34 @@
 - [ ] **KIS 토큰 만료 자동 복구**: 장중 실행 직전 토큰 유효성 선제 검증 및 강제 갱신 옵션
 - [ ] **일일 스케줄러 생존 확인(Heartbeat)**: 장 시작 전(08:30) 봇 상태 정상 동작 여부를 디스코드로 1줄 핑 전송
 
+### ☁️ 오라클 클라우드 프리티어(OCI Always Free) 무인 배포 가이드
+> **목적**: 로컬 PC 전원 의존(15:20 PC 켜두기)을 완전히 없애고, 24시간 365일 무인 자동매매/모니터링 구현.  
+> **특징**: 상시 구동 웹서버가 아니라 평일 08:30과 15:20에 1초씩만 실행되는 초경량 배치(RAM 50MB 미만)이므로 기존 OCI 서비스에 부하 0.
+
+- [ ] **1. 서버 기본 환경 셋업**:
+  - 한국 시간대(KST) 동기화: `sudo timedatectl set-timezone Asia/Seoul`
+  - 리포지토리 클론: `git clone -b dev https://github.com/haksoo0918/quant-ko.git`
+  - 가상환경 및 의존성 설치:
+    ```bash
+    cd quant-ko
+    python3 -m venv .venv
+    source .venv/bin/activate
+    pip install -e .
+    ```
+- [ ] **2. 환경변수 및 데이터베이스 파일 복사**:
+  - `.env` 파일 복사: 모의투자 키(`KIS_MOCK_*`), 디스코드 웹훅(`DISCORD_WEBHOOK_URL`) 포함
+  - DB 파일 복사: 로컬의 `data/quant_ko.db`를 서버 `quant-ko/data/quant_ko.db`로 전송 (`scp data/quant_ko.db ubuntu@<OCI_IP>:~/quant-ko/data/`)
+- [ ] **3. 계좌 연동 수동 1회 검증**:
+  - `python -m quant_ko.main --mode status --env mock` 실행하여 예수금 1,000만 원 및 KIS API 정상 응답 확인
+- [ ] **4. 리눅스 크론탭(`crontab -e`) 2줄 스케줄 등록**:
+  ```cron
+  # [quant-ko] 평일 08:30 일일 관리종목/환기종목 비상 모니터링
+  30 08 * * 1-5 cd /home/ubuntu/quant-ko && .venv/bin/python -m quant_ko.main --mode monitor --env mock >> /home/ubuntu/quant-ko/monitor.log 2>&1
+
+  # [quant-ko] 평일 15:20 장마감 시장가 리밸런싱 자동 주문
+  20 15 * * 1-5 cd /home/ubuntu/quant-ko && .venv/bin/python -m quant_ko.main --mode rebalance --env mock >> /home/ubuntu/quant-ko/rebalance.log 2>&1
+  ```
+
 ### [Phase 5] 20년 장기 과거 데이터 확보 및 과거 금융위기 국면 검증
 - [ ] 2005-2014 상용 데이터(FnGuide/KIS-Value 등) 및 코스닥 지수 20개년 데이터 확보 (DART API는 2015년 이후만 정형 재무제표 제공)
 - [ ] 2008 금융위기, 2020 코로나 등 국면별 MDD 방어력 장기 검증
