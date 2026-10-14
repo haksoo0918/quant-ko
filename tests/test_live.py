@@ -5,7 +5,7 @@ import pytest
 from quant_ko.broker.kis import Balance, KisClient, OrderResult, Position
 from quant_ko.data.store import DataStore
 from quant_ko.live.monitor import DailyMonitor
-from quant_ko.live.rebalancer import LiveRebalancer
+from quant_ko.live.rebalancer import LiveRebalancer, _chunk_field_lines
 from quant_ko.notify.discord import DiscordNotifier
 
 
@@ -407,3 +407,162 @@ def test_daily_monitor_no_action_when_healthy(store):
     assert len(liquidated) == 0
     kis_mock.place_order.assert_not_called()
     assert len(notifier.sent_messages) == 0
+
+
+def test_rebalancer_comprehensive_discord_notification(store):
+    """Test detailed Discord notification embed with stock names and proper sections."""
+    notifier = DiscordNotifier(mock_mode=True)
+    kis_mock = MagicMock(spec=KisClient)
+
+    kis_mock.fetch_balance.return_value = Balance(
+        cash=5_000_000.0,
+        total_eval_amount=5_500_000.0,
+        positions=[
+            Position(
+                ticker="000030",
+                name="퇴출대상C",
+                qty=100,
+                current_price=5000.0,
+                eval_amount=500_000.0,
+            )
+        ],
+    )
+    price_map = {"000010": 10000.0, "000020": 20000.0, "000030": 5000.0}
+    kis_mock.fetch_current_price.side_effect = lambda t: price_map.get(t, 10000.0)
+
+    kis_mock.place_order.side_effect = lambda ticker, side, qty, price, order_type="01": (
+        OrderResult(
+            order_no="ORD123",
+            ticker=ticker,
+            side=side,
+            qty=qty,
+            price=price,
+            success=True,
+            message="정상 체결",
+        )
+    )
+
+    rebalancer = LiveRebalancer(
+        store=store,
+        kis_client=kis_mock,
+        notifier=notifier,
+        env="mock",
+    )
+
+    rebalancer.execute(
+        rebalance_date="2026-04-01",
+        pit_date="2026-03-31",
+        universe_kwargs={"market_cap_quantile": 1.0},
+    )
+
+    assert len(notifier.sent_messages) == 1
+    embed = notifier.sent_messages[0]["embeds"][0]
+
+    assert embed["title"] == "📈 [리밸런싱 완료] 2026-04-01"
+    assert embed["color"] == 0x2ECC71
+
+    field_map = {f["name"]: f["value"] for f in embed["fields"]}
+
+    # 1. Target portfolio contains company names and weights
+    target_field = [v for k, v in field_map.items() if "타깃 포트폴리오" in k]
+    assert len(target_field) >= 1
+    assert "회사A(000010)" in target_field[0]
+    assert "회사B(000020)" in target_field[0]
+    assert "50.0%" in target_field[0]
+
+    # 2. Sell execution details
+    sell_field = [v for k, v in field_map.items() if "매도 체결 상세" in k]
+    assert len(sell_field) >= 1
+    assert "퇴출대상C(000030) 100주 @ 5,000원 (500,000원)" in sell_field[0]
+
+    # 3. Buy execution details
+    buy_field = [v for k, v in field_map.items() if "매수 체결 상세" in k]
+    assert len(buy_field) >= 1
+    assert "회사A(000010)" in buy_field[0]
+    assert "회사B(000020)" in buy_field[0]
+
+    # 4. Account summary
+    assert "💰 계좌 요약" in field_map
+    assert "총 평가액:" in field_map["💰 계좌 요약"]
+    assert "예상 잔여 예수금:" in field_map["💰 계좌 요약"]
+
+    # 5. Operating env
+    assert "⚙️ 운용 환경" in field_map
+    assert "MOCK" in field_map["⚙️ 운용 환경"]
+
+
+def test_rebalancer_discord_notification_with_failed_order(store):
+    """Test notification handles failed orders and displays error messages."""
+    notifier = DiscordNotifier(mock_mode=True)
+    kis_mock = MagicMock(spec=KisClient)
+
+    kis_mock.fetch_balance.return_value = Balance(
+        cash=5_000_000.0,
+        total_eval_amount=5_000_000.0,
+        positions=[],
+    )
+    price_map = {"000010": 10000.0, "000020": 20000.0}
+    kis_mock.fetch_current_price.side_effect = lambda t: price_map.get(t, 10000.0)
+
+    # Make 000020 buy fail
+    def mock_place_order(ticker, side, qty, price, order_type="01"):
+        if ticker == "000020":
+            return OrderResult(
+                order_no="",
+                ticker=ticker,
+                side=side,
+                qty=qty,
+                price=price,
+                success=False,
+                message="호가 한도 초과",
+            )
+        return OrderResult(
+            order_no="ORD001",
+            ticker=ticker,
+            side=side,
+            qty=qty,
+            price=price,
+            success=True,
+            message="OK",
+        )
+
+    kis_mock.place_order.side_effect = mock_place_order
+
+    rebalancer = LiveRebalancer(
+        store=store,
+        kis_client=kis_mock,
+        notifier=notifier,
+        env="real",
+    )
+
+    rebalancer.execute(
+        rebalance_date="2026-04-01",
+        pit_date="2026-03-31",
+        universe_kwargs={"market_cap_quantile": 1.0},
+    )
+
+    assert len(notifier.sent_messages) == 1
+    embed = notifier.sent_messages[0]["embeds"][0]
+
+    # Failure color
+    assert embed["color"] == 0xE74C3C
+
+    field_map = {f["name"]: f["value"] for f in embed["fields"]}
+    failed_field = [v for k, v in field_map.items() if "주문 실패/거절" in k]
+    assert len(failed_field) >= 1
+    assert "회사B(000020)" in failed_field[0]
+    assert "거절(호가 한도 초과)" in failed_field[0]
+
+
+def test_chunk_field_lines_splits_large_content():
+    """Verify that field lines exceeding 1000 characters chunk into (1), (2), etc."""
+    lines = [
+        f"• 종목이름이매우긴회사_{i}({i:06d}) 100주 @ 10,000원 (1,000,000원)" for i in range(40)
+    ]
+    chunks = _chunk_field_lines("🔴 매도 체결 상세 (40건)", lines, "내역 없음", max_len=500)
+
+    assert len(chunks) > 1
+    assert chunks[0]["name"] == "🔴 매도 체결 상세 (40건) (1)"
+    assert chunks[1]["name"] == "🔴 매도 체결 상세 (40건) (2)"
+    for c in chunks:
+        assert len(c["value"]) <= 500

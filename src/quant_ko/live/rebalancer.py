@@ -19,6 +19,41 @@ logger = logging.getLogger(__name__)
 CD_ETF_TICKER = "357870"  # TIGER CD금리투자KIS(합성) - 1주당 약 53,000원으로 소액 시드 단주 최소화
 
 
+def _chunk_field_lines(
+    base_title: str,
+    lines: list[str],
+    empty_msg: str,
+    max_len: int = 1000,
+) -> list[dict[str, Any]]:
+    """Split lines into field chunks if character length exceeds max_len."""
+    if not lines:
+        return [{"name": base_title, "value": empty_msg, "inline": False}]
+
+    chunks: list[str] = []
+    curr_lines: list[str] = []
+    curr_len = 0
+    for line in lines:
+        line_len = len(line) + 1  # includes newline
+        if curr_len + line_len > max_len and curr_lines:
+            chunks.append("\n".join(curr_lines))
+            curr_lines = [line]
+            curr_len = line_len
+        else:
+            curr_lines.append(line)
+            curr_len += line_len
+
+    if curr_lines:
+        chunks.append("\n".join(curr_lines))
+
+    if len(chunks) <= 1:
+        return [{"name": base_title, "value": chunks[0] if chunks else empty_msg, "inline": False}]
+
+    return [
+        {"name": f"{base_title} ({i + 1})", "value": chunk, "inline": False}
+        for i, chunk in enumerate(chunks)
+    ]
+
+
 class LiveRebalancer:
     """Executes rebalancing orders via KIS Open API."""
 
@@ -124,7 +159,22 @@ class LiveRebalancer:
             target_weights = dict(zip(selected_df["ticker"], selected_df["weight"], strict=False))
 
         # 3. Collect current prices (Broker live price -> DataStore DB close fallback)
+        # 3. Collect current prices and lookup company names
         all_tickers = set(held_positions.keys()).union(target_weights.keys())
+        name_map: dict[str, str] = {}
+        if self.store is not None:
+            try:
+                c_df = self.store.get_companies(list(all_tickers))
+                if not c_df.empty:
+                    name_map = dict(zip(c_df["ticker"], c_df["name"], strict=False))
+            except Exception as e:
+                logger.warning("Failed to lookup company names: %s", e)
+        if self.cd_etf_ticker not in name_map:
+            name_map[self.cd_etf_ticker] = "TIGER CD금리투자KIS(합성)"
+
+        def get_stock_name(t: str) -> str:
+            return name_map.get(t) or t
+
         prices: dict[str, float] = {}
         for ticker in all_tickers:
             price = 0.0
@@ -188,10 +238,13 @@ class LiveRebalancer:
 
         # 4. Execute SELLs first
         for ticker, qty, price in sells:
+            name = get_stock_name(ticker)
+            amount = qty * price
             try:
                 if dry_run:
                     res_success = True
                     order_no = f"DRY_SELL_{ticker}"
+                    msg = "모의 실행 완료"
                 else:
                     res = self.kis_client.place_order(
                         ticker=ticker,
@@ -202,6 +255,7 @@ class LiveRebalancer:
                     )
                     res_success = res.success
                     order_no = res.order_no
+                    msg = res.message or ("정상 체결" if res.success else "주문 실패")
 
                 order_id = self.store.insert_order(
                     {
@@ -222,18 +276,36 @@ class LiveRebalancer:
                         "id": order_id,
                         "order_no": order_no,
                         "ticker": ticker,
+                        "name": name,
                         "side": "SELL",
                         "qty": qty,
                         "price": price,
+                        "amount": amount,
                         "success": res_success,
+                        "message": msg,
                     }
                 )
-                net_proceeds = qty * price * (1.0 - self.cost_rate)
-                available_cash += net_proceeds
+                if res_success:
+                    net_proceeds = qty * price * (1.0 - self.cost_rate)
+                    available_cash += net_proceeds
                 if not dry_run:
                     time.sleep(0.5)
             except Exception as e:
                 logger.error("SELL order failed for %s: %s", ticker, e)
+                executed_orders.append(
+                    {
+                        "id": 0,
+                        "order_no": "",
+                        "ticker": ticker,
+                        "name": name,
+                        "side": "SELL",
+                        "qty": qty,
+                        "price": price,
+                        "amount": amount,
+                        "success": False,
+                        "message": str(e),
+                    }
+                )
 
         # 5. Execute BUYs next
         for ticker, qty, price in buys:
@@ -245,10 +317,13 @@ class LiveRebalancer:
             if buy_qty <= 0:
                 continue
 
+            name = get_stock_name(ticker)
+            amount = buy_qty * price
             try:
                 if dry_run:
                     res_success = True
                     order_no = f"DRY_BUY_{ticker}"
+                    msg = "모의 실행 완료"
                 else:
                     res = self.kis_client.place_order(
                         ticker=ticker,
@@ -259,6 +334,7 @@ class LiveRebalancer:
                     )
                     res_success = res.success
                     order_no = res.order_no
+                    msg = res.message or ("정상 체결" if res.success else "주문 실패")
 
                 order_id = self.store.insert_order(
                     {
@@ -279,44 +355,123 @@ class LiveRebalancer:
                         "id": order_id,
                         "order_no": order_no,
                         "ticker": ticker,
+                        "name": name,
                         "side": "BUY",
                         "qty": buy_qty,
                         "price": price,
+                        "amount": amount,
                         "success": res_success,
+                        "message": msg,
                     }
                 )
-                total_outlay = buy_qty * cost_per_share
-                available_cash -= total_outlay
+                if res_success:
+                    total_outlay = buy_qty * cost_per_share
+                    available_cash -= total_outlay
                 if not dry_run:
                     time.sleep(0.5)
             except Exception as e:
                 logger.error("BUY order failed for %s: %s", ticker, e)
+                executed_orders.append(
+                    {
+                        "id": 0,
+                        "order_no": "",
+                        "ticker": ticker,
+                        "name": name,
+                        "side": "BUY",
+                        "qty": buy_qty,
+                        "price": price,
+                        "amount": amount,
+                        "success": False,
+                        "message": str(e),
+                    }
+                )
 
         # 6. Discord Notification
         if self.notifier:
-            success_sells = sum(1 for o in executed_orders if o["side"] == "SELL" and o.get("success"))
-            success_buys = sum(1 for o in executed_orders if o["side"] == "BUY" and o.get("success"))
+            success_sells = [o for o in executed_orders if o["side"] == "SELL" and o.get("success")]
+            success_buys = [o for o in executed_orders if o["side"] == "BUY" and o.get("success")]
             failed_orders = [o for o in executed_orders if not o.get("success")]
-            mode_tag = "[모의 실행 (Dry-Run)]" if dry_run else "[리밸런싱 완료]"
-            fields = [
-                {"name": "성공 주문", "value": f"매수 {success_buys}건 / 매도 {success_sells}건", "inline": True},
+
+            fields: list[dict[str, Any]] = []
+
+            # 1. 🎯 타깃 포트폴리오 (N종목)
+            target_lines = [
+                f"• {get_stock_name(t)}({t}) {w * 100:.1f}%" for t, w in target_weights.items()
+            ]
+            fields.extend(
+                _chunk_field_lines(
+                    f"🎯 타깃 포트폴리오 ({len(target_weights)}종목)",
+                    target_lines,
+                    "타깃 종목 없음",
+                )
+            )
+
+            # 2. 🔴 매도 체결 상세 (N건)
+            sell_lines = [
+                f"• {o['name']}({o['ticker']}) {o['qty']:,}주 @ {int(o['price']):,}원 ({int(o['amount']):,}원)"
+                for o in success_sells
+            ]
+            fields.extend(
+                _chunk_field_lines(
+                    f"🔴 매도 체결 상세 ({len(success_sells)}건)",
+                    sell_lines,
+                    "매도 내역 없음",
+                )
+            )
+
+            # 3. 🟢 매수 체결 상세 (N건)
+            buy_lines = [
+                f"• {o['name']}({o['ticker']}) {o['qty']:,}주 @ {int(o['price']):,}원 ({int(o['amount']):,}원)"
+                for o in success_buys
+            ]
+            fields.extend(
+                _chunk_field_lines(
+                    f"🟢 매수 체결 상세 ({len(success_buys)}건)",
+                    buy_lines,
+                    "매수 내역 없음",
+                )
+            )
+
+            # 4. ⚠️ 주문 실패/거절 (N건) (only if failed_orders exist)
+            if failed_orders:
+                failed_lines = [
+                    f"• {o['name']}({o['ticker']}) {o['qty']:,}주 @ {int(o['price']):,}원 - 거절({o.get('message', '알 수 없음')})"
+                    for o in failed_orders
+                ]
+                fields.extend(
+                    _chunk_field_lines(
+                        f"⚠️ 주문 실패/거절 ({len(failed_orders)}건)",
+                        failed_lines,
+                        "실패 내역 없음",
+                    )
+                )
+
+            # 5. 💰 계좌 요약
+            fields.append(
                 {
-                    "name": "실패 주문",
-                    "value": f"{len(failed_orders)}건"
-                    + (f" ({', '.join(o['ticker'] for o in failed_orders)})" if failed_orders else ""),
-                    "inline": True,
-                },
+                    "name": "💰 계좌 요약",
+                    "value": f"총 평가액: {int(total_equity):,}원 | 예상 잔여 예수금: {int(available_cash):,}원",
+                    "inline": False,
+                }
+            )
+
+            # 6. ⚙️ 운용 환경
+            fields.append(
                 {
-                    "name": "운용 환경",
+                    "name": "⚙️ 운용 환경",
                     "value": f"{self.env.upper()}{' (DRY-RUN)' if dry_run else ''}",
                     "inline": True,
-                },
-            ]
+                }
+            )
+
+            mode_tag = "[모의 실행 (Dry-Run)]" if dry_run else "[리밸런싱 완료]"
+            embed_color = 0x3498DB if dry_run else (0xE74C3C if failed_orders else 0x2ECC71)
+
             self.notifier.send_embed(
                 title=f"📈 {mode_tag} {norm_reb_date}",
                 description=f"포트폴리오 총 평가액: {int(total_equity):,}원\n주문 전송이 완료되었습니다.",
                 fields=fields,
-                color=0x3498DB if dry_run else (0xE74C3C if failed_orders else 0x2ECC71),
+                color=embed_color,
             )
 
         return {

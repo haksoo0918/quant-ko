@@ -201,15 +201,18 @@ def test_kis_request_retry_success(kis_client):
     success_resp.status_code = 200
 
     # 1회차, 2회차 ConnectionError -> 3회차 성공
-    with patch.object(
-        kis_client.session,
-        "get",
-        side_effect=[
-            requests.ConnectionError("Connection reset"),
-            requests.Timeout("Read timeout"),
-            success_resp,
-        ],
-    ) as mock_get, patch("time.sleep") as mock_sleep:
+    with (
+        patch.object(
+            kis_client.session,
+            "get",
+            side_effect=[
+                requests.ConnectionError("Connection reset"),
+                requests.Timeout("Read timeout"),
+                success_resp,
+            ],
+        ) as mock_get,
+        patch("time.sleep") as mock_sleep,
+    ):
         resp = kis_client._request("GET", "https://mock.url", max_retries=3, backoff_factor=0.01)
         assert resp == success_resp
         assert mock_get.call_count == 3
@@ -220,11 +223,14 @@ def test_kis_request_retry_exhausted(kis_client):
     """최대 재시도(3회) 초과 시 예외를 전파하는지 검증."""
     import requests
 
-    with patch.object(
-        kis_client.session,
-        "post",
-        side_effect=requests.ConnectionError("Network down"),
-    ) as mock_post, patch("time.sleep"):
+    with (
+        patch.object(
+            kis_client.session,
+            "post",
+            side_effect=requests.ConnectionError("Network down"),
+        ) as mock_post,
+        patch("time.sleep"),
+    ):
         import pytest
 
         with pytest.raises(requests.ConnectionError):
@@ -240,7 +246,10 @@ def test_kis_request_no_retry_on_4xx(kis_client):
     mock_resp.status_code = 400
     err = requests.HTTPError(response=mock_resp)
 
-    with patch.object(kis_client.session, "get", side_effect=err) as mock_get, patch("time.sleep") as mock_sleep:
+    with (
+        patch.object(kis_client.session, "get", side_effect=err) as mock_get,
+        patch("time.sleep") as mock_sleep,
+    ):
         import pytest
 
         with pytest.raises(requests.HTTPError):
