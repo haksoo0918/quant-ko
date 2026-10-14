@@ -40,7 +40,7 @@ try {
 
 # 2. 월별 리밸런싱 작업 (매월 28~31일 15:20에 실행되어 거래일 여부 판별)
 $RebalanceTaskName = "QuantKo-MonthlyRebalance"
-$RebalanceAction = New-ScheduledTaskAction -Execute $PythonExe -Argument "-m quant_ko.main --mode rebalance --env mock" -WorkingDirectory $ProjectRoot
+$RebalanceAction = New-ScheduledTaskAction -Execute $PythonExe -Argument "-m quant_ko.main --mode rebalance --env mock --strategy standard" -WorkingDirectory $ProjectRoot
 $RebalanceTrigger = New-ScheduledTaskTrigger -Daily -At 03:20PM
 $RebalanceSettings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit (New-TimeSpan -Minutes 20)
 
