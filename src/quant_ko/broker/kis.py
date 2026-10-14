@@ -257,7 +257,7 @@ class KisClient:
         # Parse positions (output1)
         positions: list[Position] = []
         for item in data.get("output1", []):
-            qty = int(item.get("hld_qty", 0))
+            qty = int(item.get("hldg_qty") or item.get("hld_qty") or 0)
             if qty <= 0:
                 continue
             positions.append(
@@ -344,6 +344,8 @@ class KisClient:
             "CCLD_DVSN": "00",
             "ORD_GNO_BRNO": "",
             "ODNO": "",
+            "INQR_DVSN_3": "00",
+            "INQR_DVSN_1": "",
             "CTX_AREA_FK100": "",
             "CTX_AREA_NK100": "",
         }

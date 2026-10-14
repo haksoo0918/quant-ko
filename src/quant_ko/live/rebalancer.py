@@ -2,6 +2,7 @@
 
 import logging
 import math
+import time
 from typing import Any
 
 from quant_ko.backtest.calendar import get_rebalance_schedule
@@ -229,6 +230,8 @@ class LiveRebalancer:
                 )
                 net_proceeds = qty * price * (1.0 - self.cost_rate)
                 available_cash += net_proceeds
+                if not dry_run:
+                    time.sleep(0.5)
             except Exception as e:
                 logger.error("SELL order failed for %s: %s", ticker, e)
 
@@ -284,6 +287,8 @@ class LiveRebalancer:
                 )
                 total_outlay = buy_qty * cost_per_share
                 available_cash -= total_outlay
+                if not dry_run:
+                    time.sleep(0.5)
             except Exception as e:
                 logger.error("BUY order failed for %s: %s", ticker, e)
 
