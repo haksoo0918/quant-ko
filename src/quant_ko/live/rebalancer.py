@@ -294,14 +294,16 @@ class LiveRebalancer:
 
         # 6. Discord Notification
         if self.notifier:
-            sell_count = sum(1 for o in executed_orders if o["side"] == "SELL")
-            buy_count = sum(1 for o in executed_orders if o["side"] == "BUY")
+            success_sells = sum(1 for o in executed_orders if o["side"] == "SELL" and o.get("success"))
+            success_buys = sum(1 for o in executed_orders if o["side"] == "BUY" and o.get("success"))
+            failed_orders = [o for o in executed_orders if not o.get("success")]
             mode_tag = "[모의 실행 (Dry-Run)]" if dry_run else "[리밸런싱 완료]"
             fields = [
-                {"name": "총 주문 수", "value": f"{len(executed_orders)}건", "inline": True},
+                {"name": "성공 주문", "value": f"매수 {success_buys}건 / 매도 {success_sells}건", "inline": True},
                 {
-                    "name": "매도 / 매수",
-                    "value": f"매도 {sell_count}건 / 매수 {buy_count}건",
+                    "name": "실패 주문",
+                    "value": f"{len(failed_orders)}건"
+                    + (f" ({', '.join(o['ticker'] for o in failed_orders)})" if failed_orders else ""),
                     "inline": True,
                 },
                 {
@@ -314,7 +316,7 @@ class LiveRebalancer:
                 title=f"📈 {mode_tag} {norm_reb_date}",
                 description=f"포트폴리오 총 평가액: {int(total_equity):,}원\n주문 전송이 완료되었습니다.",
                 fields=fields,
-                color=0x3498DB if dry_run else 0x2ECC71,
+                color=0x3498DB if dry_run else (0xE74C3C if failed_orders else 0x2ECC71),
             )
 
         return {
