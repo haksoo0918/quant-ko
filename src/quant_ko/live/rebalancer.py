@@ -3,7 +3,7 @@
 import logging
 import math
 import time
-from typing import Any
+from typing import Any, TypedDict
 
 from quant_ko.backtest.calendar import get_rebalance_schedule
 from quant_ko.broker.kis import KisClient
@@ -17,6 +17,35 @@ logger = logging.getLogger(__name__)
 
 
 CD_ETF_TICKER = "357870"  # TIGER CD금리투자KIS(합성) - 1주당 약 53,000원으로 소액 시드 단주 최소화
+
+
+class ExecutedOrderSummary(TypedDict):
+    """Structured summary of an executed (or attempted) order."""
+
+    id: int
+    order_no: str
+    ticker: str
+    name: str
+    side: str
+    qty: int
+    price: float
+    amount: float
+    success: bool
+    message: str
+
+
+def _format_order_line(order: ExecutedOrderSummary, is_failure: bool = False) -> str:
+    """Format an order summary for Discord embed display."""
+    if is_failure:
+        side_kr = "매수" if order["side"] == "BUY" else "매도"
+        return (
+            f"• [{side_kr}] {order['name']}({order['ticker']}) "
+            f"{order['qty']:,}주 @ {int(order['price']):,}원 - 거절({order.get('message', '알 수 없음')})"
+        )
+    return (
+        f"• {order['name']}({order['ticker']}) "
+        f"{order['qty']:,}주 @ {int(order['price']):,}원 ({int(order['amount']):,}원)"
+    )
 
 
 def _chunk_field_lines(
@@ -233,7 +262,7 @@ class LiveRebalancer:
                 if price > 0:
                     buys.append((ticker, target_qty, price))
 
-        executed_orders: list[dict[str, Any]] = []
+        executed_orders: list[ExecutedOrderSummary] = []
         available_cash = current_cash
 
         # 4. Execute SELLs first
@@ -303,7 +332,7 @@ class LiveRebalancer:
                         "price": price,
                         "amount": amount,
                         "success": False,
-                        "message": str(e),
+                        "message": f"시스템 오류 ({type(e).__name__})",
                     }
                 )
 
@@ -311,13 +340,28 @@ class LiveRebalancer:
         for ticker, qty, price in buys:
             if price <= 0:
                 continue
+            name = get_stock_name(ticker)
             cost_per_share = price * (1.0 + self.cost_rate)
             max_buyable = math.floor(available_cash / cost_per_share) if cost_per_share > 0 else 0
             buy_qty = min(qty, max_buyable)
             if buy_qty <= 0:
+                if qty > 0:
+                    executed_orders.append(
+                        {
+                            "id": 0,
+                            "order_no": "",
+                            "ticker": ticker,
+                            "name": name,
+                            "side": "BUY",
+                            "qty": qty,
+                            "price": price,
+                            "amount": qty * price,
+                            "success": False,
+                            "message": "예수금 부족으로 주문 스킵",
+                        }
+                    )
                 continue
 
-            name = get_stock_name(ticker)
             amount = buy_qty * price
             try:
                 if dry_run:
@@ -382,7 +426,7 @@ class LiveRebalancer:
                         "price": price,
                         "amount": amount,
                         "success": False,
-                        "message": str(e),
+                        "message": f"시스템 오류 ({type(e).__name__})",
                     }
                 )
 
@@ -407,10 +451,7 @@ class LiveRebalancer:
             )
 
             # 2. 🔴 매도 체결 상세 (N건)
-            sell_lines = [
-                f"• {o['name']}({o['ticker']}) {o['qty']:,}주 @ {int(o['price']):,}원 ({int(o['amount']):,}원)"
-                for o in success_sells
-            ]
+            sell_lines = [_format_order_line(o) for o in success_sells]
             fields.extend(
                 _chunk_field_lines(
                     f"🔴 매도 체결 상세 ({len(success_sells)}건)",
@@ -420,10 +461,7 @@ class LiveRebalancer:
             )
 
             # 3. 🟢 매수 체결 상세 (N건)
-            buy_lines = [
-                f"• {o['name']}({o['ticker']}) {o['qty']:,}주 @ {int(o['price']):,}원 ({int(o['amount']):,}원)"
-                for o in success_buys
-            ]
+            buy_lines = [_format_order_line(o) for o in success_buys]
             fields.extend(
                 _chunk_field_lines(
                     f"🟢 매수 체결 상세 ({len(success_buys)}건)",
@@ -434,10 +472,7 @@ class LiveRebalancer:
 
             # 4. ⚠️ 주문 실패/거절 (N건) (only if failed_orders exist)
             if failed_orders:
-                failed_lines = [
-                    f"• {o['name']}({o['ticker']}) {o['qty']:,}주 @ {int(o['price']):,}원 - 거절({o.get('message', '알 수 없음')})"
-                    for o in failed_orders
-                ]
+                failed_lines = [_format_order_line(o, is_failure=True) for o in failed_orders]
                 fields.extend(
                     _chunk_field_lines(
                         f"⚠️ 주문 실패/거절 ({len(failed_orders)}건)",

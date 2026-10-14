@@ -550,8 +550,127 @@ def test_rebalancer_discord_notification_with_failed_order(store):
     field_map = {f["name"]: f["value"] for f in embed["fields"]}
     failed_field = [v for k, v in field_map.items() if "주문 실패/거절" in k]
     assert len(failed_field) >= 1
-    assert "회사B(000020)" in failed_field[0]
+    assert "[매수] 회사B(000020)" in failed_field[0]
     assert "거절(호가 한도 초과)" in failed_field[0]
+
+
+def test_rebalancer_insufficient_cash_records_skipped_order(store):
+    """When buy_qty is 0 due to insufficient cash while target qty > 0, record failed order."""
+    notifier = DiscordNotifier(mock_mode=True)
+    kis_mock = MagicMock(spec=KisClient)
+
+    # Initial cash: 12,000 KRW, holding 000030 (10 shares @ 5,000 = 50,000 KRW)
+    # Total equity = 62,000 KRW
+    # Target weights: 000010 (50% = 31,000 -> 3 shares @ 10,000), 000020 (50% = 31,000 -> 1 share @ 20,000)
+    kis_mock.fetch_balance.return_value = Balance(
+        cash=12000.0,
+        total_eval_amount=62000.0,
+        positions=[
+            Position(
+                ticker="000030", name="퇴출대상C", qty=10, current_price=5000.0, eval_amount=50000.0
+            )
+        ],
+    )
+    price_map = {"000010": 10000.0, "000020": 20000.0, "000030": 5000.0}
+    kis_mock.fetch_current_price.side_effect = lambda t: price_map.get(t, 10000.0)
+
+    # Make SELL of 000030 fail, so cash is not replenished!
+    def mock_place_order(ticker, side, qty, price, order_type="01"):
+        if ticker == "000030":
+            return OrderResult(
+                order_no="",
+                ticker=ticker,
+                side=side,
+                qty=qty,
+                price=price,
+                success=False,
+                message="매도 불가",
+            )
+        return OrderResult(
+            order_no="ORD001",
+            ticker=ticker,
+            side=side,
+            qty=qty,
+            price=price,
+            success=True,
+            message="OK",
+        )
+
+    kis_mock.place_order.side_effect = mock_place_order
+
+    rebalancer = LiveRebalancer(
+        store=store,
+        kis_client=kis_mock,
+        notifier=notifier,
+        env="mock",
+    )
+
+    result = rebalancer.execute(
+        rebalance_date="2026-04-01",
+        pit_date="2026-03-31",
+        universe_kwargs={"market_cap_quantile": 1.0},
+    )
+
+    # 000010 takes 1 share @ 10,000 (available cash was 12,000). Remaining cash is ~1,970 KRW.
+    # 000020 needs 1 share @ 20,000, but only 1,970 is left -> buy_qty = 0!
+    # 000020 should NOT be silently dropped!
+    skipped = [o for o in result["orders"] if o.get("message") == "예수금 부족으로 주문 스킵"]
+    assert len(skipped) == 1
+    assert skipped[0]["ticker"] == "000020"
+    assert skipped[0]["side"] == "BUY"
+    assert skipped[0]["id"] == 0
+
+    # Ensure Discord failure field reflects this
+    assert len(notifier.sent_messages) == 1
+    embed = notifier.sent_messages[0]["embeds"][0]
+    field_map = {f["name"]: f["value"] for f in embed["fields"]}
+    failed_field = [v for k, v in field_map.items() if "주문 실패/거절" in k]
+    assert len(failed_field) >= 1
+    assert "예수금 부족으로 주문 스킵" in failed_field[0]
+
+
+def test_rebalancer_order_exception_sanitizes_system_error(store):
+    """When an exception occurs during order submission, message is sanitized without exposing raw trace."""
+    notifier = DiscordNotifier(mock_mode=True)
+    kis_mock = MagicMock(spec=KisClient)
+
+    kis_mock.fetch_balance.return_value = Balance(
+        cash=5_000_000.0,
+        total_eval_amount=5_000_000.0,
+        positions=[],
+    )
+    price_map = {"000010": 10000.0, "000020": 20000.0}
+    kis_mock.fetch_current_price.side_effect = lambda t: price_map.get(t, 10000.0)
+
+    # Throw a low level connection error
+    import requests
+
+    kis_mock.place_order.side_effect = requests.ConnectionError(
+        "HTTPSConnectionPool(host='openapi.koreainvestment.com', port=9443): Max retries exceeded with url"
+    )
+
+    rebalancer = LiveRebalancer(
+        store=store,
+        kis_client=kis_mock,
+        notifier=notifier,
+        env="real",
+    )
+
+    result = rebalancer.execute(
+        rebalance_date="2026-04-01",
+        pit_date="2026-03-31",
+        universe_kwargs={"market_cap_quantile": 1.0},
+    )
+
+    failed = [o for o in result["orders"] if not o["success"]]
+    assert len(failed) > 0
+    assert failed[0]["message"] == "시스템 오류 (ConnectionError)"
+
+    embed = notifier.sent_messages[0]["embeds"][0]
+    field_map = {f["name"]: f["value"] for f in embed["fields"]}
+    failed_field = [v for k, v in field_map.items() if "주문 실패/거절" in k]
+    assert "시스템 오류 (ConnectionError)" in failed_field[0]
+    assert "HTTPSConnectionPool" not in failed_field[0]
 
 
 def test_chunk_field_lines_splits_large_content():
