@@ -36,9 +36,8 @@ This document establishes the communication, formatting, and documentation guide
 
 ## 3. File Links & Code References
 
-1. **Standard Relative Paths**: Always use standard relative paths for portability (e.g. `[PRD.md](../PRD.md)`, `[rules/](.)`).
-2. **Readable Link Text**: Use file basenames (e.g., `protocol.md`, `App.tsx`) as link text rather than full filesystem paths.
-3. **Forward Slashes**: Always normalize file paths to forward slashes `/` even on Windows.
+1. **Readable Link Text**: Use file basenames (e.g., `protocol.md`, `App.tsx`) as link text rather than full filesystem paths.
+2. **Forward Slashes**: Always normalize file paths to forward slashes `/` even on Windows.
 
 ---
 
