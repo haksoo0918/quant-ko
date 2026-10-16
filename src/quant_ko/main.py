@@ -115,6 +115,11 @@ def main() -> None:
         default="01",
         help="Order division: '01' (market order / 시장가 15:20 동시호가 100%% 체결, default) or '00' (limit order / 지정가)",
     )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Force execution even if target date is not a scheduled rebalancing date",
+    )
 
     args = parser.parse_args()
     target_date = args.date or get_current_date()
@@ -155,6 +160,17 @@ def main() -> None:
             strategy_mode=args.strategy,
             order_type=args.order_type,
         )
+
+        # 리밸런싱 날짜 게이트 검사 (크론탭 매일 실행 시 불필요한 매매 방지)
+        if not args.force:
+            trading_days = store.get_trading_days()
+            if not rebalancer.is_rebalance_date(target_date, trading_days):
+                logger.info(
+                    "오늘(%s)은 정기 리밸런싱일이 아닙니다 (매월 마지막 거래일). 작업을 안전하게 종료합니다.",
+                    target_date,
+                )
+                sys.exit(0)
+
         logger.info("Executing rebalance on %s (Dry-run: %s)...", target_date, args.dry_run)
         res = rebalancer.execute(
             rebalance_date=target_date,

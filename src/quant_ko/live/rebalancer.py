@@ -92,7 +92,7 @@ class LiveRebalancer:
         kis_client: KisClient,
         notifier: DiscordNotifier | None = None,
         env: str = "mock",
-        rebalance_freq: str = "quarterly",
+        rebalance_freq: str = "monthly",
         strategy_mode: str = "seasonality",
         cd_etf_ticker: str = CD_ETF_TICKER,
         cost_rate: float = 0.003,
