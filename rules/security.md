@@ -8,6 +8,7 @@ This document outlines mandatory security protocols to protect sensitive data an
 2. **Environment Variables**:
    - Store all runtime secrets and configuration in `.env` or local configuration files.
    - Always commit a sanitized `.env.example` documenting all expected variable names with placeholder values.
+   - **Environment File Immutability**: Never overwrite or modify existing `.env` files without explicit user instruction. All configuration updates must preserve existing comments and use strict UTF-8 (No-BOM).
 3. **Pre-Commit Verification**:
    - Verify that `.env`, `.env.local`, and credential files are included in `.gitignore`.
    - Never echo or print secret values into terminal logs, transcripts, or commit messages.
