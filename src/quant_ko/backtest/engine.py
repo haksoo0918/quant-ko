@@ -262,10 +262,10 @@ class BacktestEngine:
         initial_capital: float = 10_000_000.0,
         cost_rate: float = 0.003,
         top_n: int = 20,
-        min_trading_value: float = 200_000_000.0,
+        min_trading_value: float = 0.0,
         market_cap_quantile: float = 0.20,
         risk_free_rate: float = 0.035,
-        rebalance_freq: str = "quarterly",
+        rebalance_freq: str = "monthly",
     ) -> None:
         self.store = store
         self.initial_capital = initial_capital

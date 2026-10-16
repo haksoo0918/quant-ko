@@ -17,7 +17,7 @@ An automated quantitative investment and live-trading system for the bottom 20% 
    - **Composite Score**: Market Cap (Asc) + 4 Value Factors (PER, PSR, POR, PGPR) + 4 Growth Factors (YoY Net Income, Operating Income, Gross Profit, Revenue).
 3. **Quarterly Rebalancing & Risk Management**
    - 4 times a year: 1st trading day of April, last trading day of May, August, November.
-   - Closing auction (15:20~15:30) limit order execution with differential portfolio balancing.
+   - Closing auction (15:20\~15:30) limit order execution with differential portfolio balancing.
    - Immediate liquidation upon designation as administrative/warning issue.
 4. **KIS Open API Execution**
    - Paper trading support before transitioning to live capital.
@@ -32,7 +32,7 @@ src/quant_ko/
   ├── data/        # OpenDART, KRX collectors and SQLite storage
   ├── pit/         # Point-in-Time financial statement snapshot builder
   ├── strategy/    # Universe filters, 9-factor scoring, and portfolio selector
-  ├── backtest/    # 2016~present backtest engine, costs, and performance report
+  ├── backtest/    # 2016\~present backtest engine, costs, and performance report
   ├── broker/      # Korea Investment & Securities (KIS) Open API client
   ├── live/        # Rebalancer, daily monitor, and scheduler entry point
   └── notify/      # Telegram notification bot

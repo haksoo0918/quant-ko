@@ -117,6 +117,7 @@ def test_is_rebalance_date():
         "2026-03-31",
         "2026-04-01",
         "2026-04-02",
+        "2026-04-30",
         "2026-05-28",
         "2026-05-29",
     ]
@@ -124,11 +125,14 @@ def test_is_rebalance_date():
         store=MagicMock(),
         kis_client=MagicMock(),
         notifier=MagicMock(),
+        rebalance_freq="monthly",
     )
-    # 2026-04-01 is first trading day of April -> True
-    assert rebalancer.is_rebalance_date("2026-04-01", trading_days) is True
-    # 2026-04-02 -> False
-    assert rebalancer.is_rebalance_date("2026-04-02", trading_days) is False
+    # 2026-03-31 is last trading day of March -> True
+    assert rebalancer.is_rebalance_date("2026-03-31", trading_days) is True
+    # 2026-04-01 -> False (not month end)
+    assert rebalancer.is_rebalance_date("2026-04-01", trading_days) is False
+    # 2026-04-30 is last trading day of April -> True
+    assert rebalancer.is_rebalance_date("2026-04-30", trading_days) is True
     # 2026-05-29 is last trading day of May -> True
     assert rebalancer.is_rebalance_date("2026-05-29", trading_days) is True
 
@@ -371,8 +375,75 @@ def test_daily_monitor_liquidates_designated_stock(store):
         price=9500.0,
     )
 
-    # Check alert notification sent to discord
-    assert len(notifier.sent_messages) == 1
+
+def test_daily_monitor_liquidates_short_designation_types(store):
+    """한국거래소 DB 단축 표기('관리', '투자주의환기')도 정상 감시하여 매도하는지 검증."""
+    notifier = DiscordNotifier(mock_mode=True)
+    kis_mock = MagicMock(spec=KisClient)
+
+    # Add designations with short forms: '관리', '투자주의환기'
+    store.upsert_designations(
+        [
+            {
+                "ticker": "000010",
+                "type": "관리",
+                "start_date": "2026-04-05",
+                "end_date": None,
+            },
+            {
+                "ticker": "000020",
+                "type": "투자주의환기",
+                "start_date": "2026-04-05",
+                "end_date": None,
+            },
+        ]
+    )
+
+    kis_mock.fetch_balance.return_value = Balance(
+        cash=1_000_000.0,
+        total_eval_amount=3_000_000.0,
+        positions=[
+            Position(
+                ticker="000010",
+                name="관리주",
+                qty=50,
+                current_price=10000.0,
+                eval_amount=500_000.0,
+            ),
+            Position(
+                ticker="000020",
+                name="환기주",
+                qty=100,
+                current_price=20000.0,
+                eval_amount=2_000_000.0,
+            ),
+        ],
+    )
+    kis_mock.fetch_current_price.return_value = 10000.0
+    kis_mock.place_order.return_value = OrderResult(
+        order_no="LIQ_SHORT",
+        ticker="000010",
+        side="SELL",
+        qty=50,
+        price=10000.0,
+        success=True,
+    )
+
+    monitor = DailyMonitor(
+        store=store,
+        kis_client=kis_mock,
+        notifier=notifier,
+        env="mock",
+    )
+
+    liquidated = monitor.check_and_liquidate(as_of_date="2026-04-06")
+    # Both '관리' and '투자주의환기' must be detected and liquidated!
+    assert len(liquidated) == 2
+    liquidated_tickers = {item["ticker"] for item in liquidated}
+    assert liquidated_tickers == {"000010", "000020"}
+
+    # Check alert notifications sent to discord (1 per liquidated stock)
+    assert len(notifier.sent_messages) == 2
     alert_payload = notifier.sent_messages[0]
     assert "관리종목" in str(alert_payload) or "긴급 매도" in str(alert_payload)
 

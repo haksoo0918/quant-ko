@@ -27,17 +27,20 @@ This document establishes the communication, formatting, and documentation guide
    - `> [!WARNING]` for breaking changes and deprecations.
    - `> [!CAUTION]` for destructive or risky actions.
 3. **Code Block Identifiers**: Always specify the language identifier (e.g. `ts`, `bash`, `json`, `mermaid`) when declaring fenced code blocks.
-4. **Mandatory Space After Emphasis in Korean**: In Korean text, whenever emphasis (`**bold**` or `*italic*`) is followed by Korean characters/postpositions without whitespace, always insert a space (e.g. `**강조**문구` ❌ ➔ `**강조** 문구` ⭕) to prevent Markdown parser and bold rendering glitches.
-   - **Regardless of Internal Content**: Regardless of what symbols reside inside the emphasis tags (inline code backticks, parentheses, hyphens, glob wildcards), **a space is mandatory whenever the closing emphasis mark is followed by a Korean character** (e.g. `**번역본(`*-ko.md`)**을` ❌ ➔ `**번역본(`*-ko.md`)** 을` ⭕).
+4. **Mandatory Space After Emphasis in Korean**: In Korean text, whenever emphasis (`**bold**` or `*italic*`) is followed by Korean characters/postpositions without whitespace, always insert a space (e.g. `** 강조** 문구` ❌ ➔ `** 강조** 문구` ⭕) to prevent Markdown parser and bold rendering glitches.
+   - **Regardless of Internal Content**: Regardless of what symbols reside inside the emphasis tags (inline code backticks, parentheses, hyphens, glob wildcards), **a space is mandatory whenever the closing emphasis mark is followed by a Korean character** (e.g. `** 번역본(`*-ko.md`)** 을` ❌ ➔ `** 번역본(`*-ko.md`)** 을` ⭕).
    - **Verification Pattern**: Validated via `(?<=\S)\*\*(?=[가-힣])` to ensure zero attached Korean particles after closing bold markers.
-5. **Tilde (`~`) Strikethrough Prevention**: When writing ranges or intervals, prefer hyphens (e.g. `2023 - 2024`) or strictly escape tildes with backslashes (`\~`, e.g. `2023\~2024`) to prevent Markdown engines from erroneously parsing them as strikethrough markup (`~~strike~~`).
+5. **Tilde (`\~`) Strikethrough Prevention**: When writing ranges or intervals, prefer hyphens (e.g. `2023 - 2024`) or strictly escape tildes with backslashes (`\~`, e.g. `2023\~2024`) to prevent Markdown engines from erroneously parsing them as strikethrough markup (`~~strike~~`).
 
 ---
 
-## 3. File Links & Code References
-
-1. **Readable Link Text**: Use file basenames (e.g., `protocol.md`, `App.tsx`) as link text rather than full filesystem paths.
-2. **Forward Slashes**: Always normalize file paths to forward slashes `/` even on Windows.
+## 3. File Links, Storage & Encoding
+ 
+ 1. **Strict UTF-8 (No-BOM) Encoding**: All files (source code, markdown, configuration, shell scripts) must be created and edited in UTF-8 without BOM. Never rely on OS-default encodings (CP949, ANSI, Windows-1252) via shell redirections (`>`, `>>`) or default file writers.
+ 2. **Physical Workspace Placement**: Project documentation and deliverables must reside directly within standard project directories (e.g. `docs/`). Never leave deliverables exclusively in internal sandbox or temporary cache paths.
+ 3. **Clickable Links & In-Chat Availability**: Reference files using viewer-compatible absolute links (`file:///`) while presenting essential contents directly in chat.
+ 4. **Readable Link Text**: Use file basenames (e.g., `protocol.md`, `App.tsx`) as link text rather than full filesystem paths.
+ 5. **Forward Slashes**: Always normalize file paths to forward slashes `/` even on Windows.
 
 ---
 

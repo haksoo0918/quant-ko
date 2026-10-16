@@ -58,9 +58,7 @@ def get_rebalance_schedule(
             if norm_end and reb_date > norm_end:
                 continue
             idx = day_to_idx[reb_date]
-            if idx == 0:
-                continue
-            prior_date = sorted_days[idx - 1]
+            prior_date = sorted_days[idx - 1] if idx > 0 else reb_date
             events.append(
                 RebalanceEvent(
                     rebalance_date=reb_date,

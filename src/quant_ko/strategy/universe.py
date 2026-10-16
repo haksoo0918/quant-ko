@@ -19,7 +19,7 @@ def filter_universe(
     store: DataStore,
     as_of_date: str,
     pit_df: pd.DataFrame | None = None,
-    min_trading_value: float = 200_000_000.0,
+    min_trading_value: float = 0.0,
     market_cap_quantile: float = 0.20,
 ) -> pd.DataFrame:
     """Filter stocks according to PRD section 3.1 rules.

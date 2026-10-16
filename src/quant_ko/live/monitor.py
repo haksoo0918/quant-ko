@@ -10,7 +10,8 @@ from quant_ko.notify.discord import DiscordNotifier
 
 logger = logging.getLogger(__name__)
 
-DANGEROUS_DESIGNATION_TYPES = {"관리종목", "투자주의환기종목"}
+# 한국거래소(KRX) 공시 명칭과 DB 정규화 명칭 모두 매칭 지원
+DANGEROUS_DESIGNATION_TYPES = {"관리", "투자주의환기", "관리종목", "투자주의환기종목"}
 
 
 class DailyMonitor:

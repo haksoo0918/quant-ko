@@ -175,10 +175,14 @@ def test_filter_universe_market_cap_and_liquidity(store):
     store.upsert_daily_prices(prices)
     store.upsert_financials(financials)
 
-    # Bottom 20% of 10 companies = bottom 2 (000010 and 000020)
-    # 000010 fails liquidity (< 200M)
-    # Only 000020 should survive!
-    universe_df = filter_universe(store, as_of_date="2024-04-01")
+    # 1. Default (min_trading_value=0.0): both 000010 and 000020 survive
+    universe_default = filter_universe(store, as_of_date="2024-04-01")
+    assert len(universe_default) == 2
+    assert set(universe_default["ticker"]) == {"000010", "000020"}
+
+    # 2. Explicit liquidity filter (min_trading_value=200_000_000):
+    # 000010 fails liquidity (< 200M), only 000020 survives
+    universe_df = filter_universe(store, as_of_date="2024-04-01", min_trading_value=200_000_000.0)
     assert len(universe_df) == 1
     assert universe_df.iloc[0]["ticker"] == "000020"
 
