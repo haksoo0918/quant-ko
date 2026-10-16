@@ -95,12 +95,12 @@ chmod 600 .env
 아래 명령어를 복사해서 오라클 서버 창에 그대로 붙여넣으면 평일 아침 감시와 15:20 리밸런싱이 자동 등록됩니다:
 
 ```bash
-(crontab -l 2>/dev/null; cat << 'EOF'
-# [quant-ko] 평일 08:30 관리종목/환기종목 지정 여부 일일 감시 및 비상 청산
-30 8 * * 1-5 cd /home/ubuntu/quant-ko && /home/ubuntu/quant-ko/.venv/bin/python -m quant_ko.main --mode monitor --env mock >> /home/ubuntu/quant-ko/monitor.log 2>&1
+(crontab -l 2>/dev/null | grep -v "quant-ko"; cat << 'EOF'
+# [quant-ko] 평일 08:30 관리종목/환기종목 일일 감시 (실행 전 git pull 자동 최신화)
+30 8 * * 1-5 cd /home/ubuntu/quant-ko && git pull origin dev >> /home/ubuntu/quant-ko/deploy.log 2>&1 && /home/ubuntu/quant-ko/.venv/bin/python -m quant_ko.main --mode monitor --env mock >> /home/ubuntu/quant-ko/monitor.log 2>&1
 
-# [quant-ko] 평일 15:20 월별 리밸런싱 장마감 시장가 자동 주문 (모의투자: 계절성 파킹 없이 365일 상시 소형주 20종목 표준 모드)
-20 15 * * 1-5 cd /home/ubuntu/quant-ko && /home/ubuntu/quant-ko/.venv/bin/python -m quant_ko.main --mode rebalance --env mock --strategy standard >> /home/ubuntu/quant-ko/rebalance.log 2>&1
+# [quant-ko] 평일 15:20 월별 리밸런싱 장마감 시장가 자동 주문 (실행 전 git pull 자동 최신화, 모의투자 표준 모드)
+20 15 * * 1-5 cd /home/ubuntu/quant-ko && git pull origin dev >> /home/ubuntu/quant-ko/deploy.log 2>&1 && /home/ubuntu/quant-ko/.venv/bin/python -m quant_ko.main --mode rebalance --env mock --strategy standard >> /home/ubuntu/quant-ko/rebalance.log 2>&1
 EOF
 ) | crontab -
 ```
