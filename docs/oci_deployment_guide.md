@@ -99,8 +99,8 @@ chmod 600 .env
 # [quant-ko] 평일 08:30 관리종목/환기종목 지정 여부 일일 감시 및 비상 청산
 30 8 * * 1-5 cd /home/ubuntu/quant-ko && /home/ubuntu/quant-ko/.venv/bin/python -m quant_ko.main --mode monitor --env mock >> /home/ubuntu/quant-ko/monitor.log 2>&1
 
-# [quant-ko] 평일 15:20 월별 리밸런싱 장마감 시장가 자동 주문 (계절성 모드: 11~4월 주식 20종목 / 5~10월 CD금리 ETF 파킹)
-20 15 * * 1-5 cd /home/ubuntu/quant-ko && /home/ubuntu/quant-ko/.venv/bin/python -m quant_ko.main --mode rebalance --env mock --strategy seasonality >> /home/ubuntu/quant-ko/rebalance.log 2>&1
+# [quant-ko] 평일 15:20 월별 리밸런싱 장마감 시장가 자동 주문 (모의투자: 계절성 파킹 없이 365일 상시 소형주 20종목 표준 모드)
+20 15 * * 1-5 cd /home/ubuntu/quant-ko && /home/ubuntu/quant-ko/.venv/bin/python -m quant_ko.main --mode rebalance --env mock --strategy standard >> /home/ubuntu/quant-ko/rebalance.log 2>&1
 EOF
 ) | crontab -
 ```

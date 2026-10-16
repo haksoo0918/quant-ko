@@ -18,7 +18,7 @@
 - [x] **2. 환경변수 및 데이터베이스 파일 배치**: `.env` 및 10.5개년 실측 DB(`data/quant_ko.db`, 98MB) 이식 완료
 - [x] **3. 리눅스 크론탭(`crontab`) 365일 무인 스케줄 등록**:
   - 평일 08:30 관리종목/환기종목 일일 감시 및 비상 청산 (`--mode monitor`)
-  - 평일 15:20 월별 리밸런싱 장마감 시장가 자동 주문 (`--mode rebalance --strategy seasonality`)
+  - 평일 15:20 월별 리밸런싱 장마감 시장가 자동 주문 (모의투자 상시 모드: `--mode rebalance --strategy standard`)
 
 ### ~~[Phase 5] 20년 장기 과거 데이터 확보 (작업 중단 / De-scoped)~~
 > **결정 사유 (2026-10-12 사용자 지시)**:  
