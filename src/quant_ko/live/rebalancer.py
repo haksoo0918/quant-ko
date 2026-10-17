@@ -115,6 +115,144 @@ class LiveRebalancer:
         reb_dates = {e.rebalance_date for e in schedule}
         return norm in reb_dates
 
+    def is_d_minus_one(self, date: str, trading_days: list[str]) -> bool:
+        """Check if given date is D-1 (the trading day immediately preceding rebalance date)."""
+        norm = normalize_date(date)
+        sorted_days = sorted(list({normalize_date(d) for d in trading_days}))
+        if norm not in sorted_days:
+            return False
+        idx = sorted_days.index(norm)
+        if idx + 1 >= len(sorted_days):
+            return False
+        next_day = sorted_days[idx + 1]
+        return self.is_rebalance_date(next_day, sorted_days)
+
+    def send_d_minus_one_briefing(
+        self,
+        as_of_date: str,
+        trading_days: list[str] | None = None,
+        universe_kwargs: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Send D-1 advance briefing notification to Discord before scheduled rebalance."""
+        from datetime import datetime, timedelta
+
+        norm_date = normalize_date(as_of_date)
+        if not trading_days:
+            trading_days = self.store.get_trading_days()
+        sorted_days = sorted(list({normalize_date(d) for d in trading_days}))
+
+        target_reb_date = norm_date
+        if norm_date in sorted_days:
+            idx = sorted_days.index(norm_date)
+            if idx + 1 < len(sorted_days):
+                target_reb_date = sorted_days[idx + 1]
+        else:
+            dt_tmp = datetime.strptime(norm_date, "%Y-%m-%d")
+            target_reb_date = (dt_tmp + timedelta(days=1)).strftime("%Y-%m-%d")
+
+        # 1. Broker balance & positions
+        balance = self.kis_client.fetch_balance()
+        held_positions = {p.ticker: p for p in balance.positions if p.qty > 0}
+
+        # 2. Strategy target calculation
+        dt = datetime.strptime(target_reb_date, "%Y-%m-%d")
+        is_parking_period = self.strategy_mode == "seasonality" and dt.month in [5, 6, 7, 8, 9, 10]
+
+        target_tickers: list[str] = []
+        if is_parking_period:
+            target_tickers = [self.cd_etf_ticker]
+        else:
+            try:
+                u_kwargs = {"min_trading_value": 0.0}
+                if universe_kwargs:
+                    u_kwargs.update(universe_kwargs)
+                universe_df = filter_universe(self.store, as_of_date=norm_date, **u_kwargs)
+                if not universe_df.empty:
+                    selected_df = score_and_select(universe_df, top_n=20)
+                    if not selected_df.empty:
+                        target_tickers = selected_df["ticker"].tolist()
+            except Exception as e:
+                logger.error("Failed to calculate target scores for D-1 briefing: %s", e)
+
+        # 3. Compare portfolio deltas
+        held_set = set(held_positions.keys())
+        target_set = set(target_tickers)
+
+        keep_tickers = held_set & target_set
+        buy_tickers = target_set - held_set
+        sell_tickers = held_set - target_set
+
+        company_map: dict[str, str] = {}
+        if self.store is not None:
+            try:
+                comp_df = self.store.get_companies()
+                if not comp_df.empty:
+                    company_map = dict(zip(comp_df["ticker"], comp_df["name"], strict=False))
+            except Exception:
+                pass
+        company_map[self.cd_etf_ticker] = "TIGER CD금리투자KIS(합성)"
+
+        # 4. Format Discord embed
+        target_lines: list[str] = []
+        if is_parking_period:
+            target_lines.append(
+                f"• {company_map.get(self.cd_etf_ticker, 'CD금리 ETF')}({self.cd_etf_ticker}) 100% 안전 파킹"
+            )
+        else:
+            for rank, t in enumerate(target_tickers, 1):
+                name = company_map.get(t, t)
+                status_tag = "[유지]" if t in keep_tickers else "[신규]"
+                target_lines.append(f"{rank:2d}. {name}({t}) {status_tag} - 목표 5.0%")
+
+        fields: list[dict[str, Any]] = [
+            {
+                "name": "리밸런싱 예정일",
+                "value": f"📅 **{target_reb_date} 15:20** (장마감 시장가)",
+                "inline": True,
+            },
+            {
+                "name": "운용 전략 / 환경",
+                "value": f"{self.strategy_mode.upper()} / {self.env.upper()}",
+                "inline": True,
+            },
+            {
+                "name": "계좌 잔고 요약",
+                "value": f"예수금: {int(balance.cash):,}원 | 총 평가액: {int(balance.total_eval_amount):,}원",
+                "inline": False,
+            },
+            {
+                "name": "포트폴리오 교체 요약",
+                "value": f"🔹 유지 {len(keep_tickers)}개 | 🟢 신규 편입 {len(buy_tickers)}개 | 🔴 전량 매도 {len(sell_tickers)}개",
+                "inline": False,
+            },
+        ]
+
+        target_chunks = _chunk_field_lines(
+            f"🎯 예정 타깃 종목 ({len(target_tickers)}개)",
+            target_lines,
+            "예정 타깃 없음",
+            max_len=1000,
+        )
+        fields.extend(target_chunks)
+
+        if self.notifier:
+            self.notifier.send_embed(
+                title=f"📢 [D-1 사전 안내] 내일({target_reb_date}) 정기 리밸런싱 예정 브리핑",
+                description="내일 15:20 장마감 시장가 리밸런싱이 진행될 예정입니다. 포트폴리오 사전 점검 리포트를 안내합니다.",
+                fields=fields,
+                color=0x3498DB,  # Nice Blue
+            )
+
+        return {
+            "success": True,
+            "target_date": target_reb_date,
+            "target_tickers": target_tickers,
+            "keep_count": len(keep_tickers),
+            "buy_count": len(buy_tickers),
+            "sell_count": len(sell_tickers),
+        }
+
+
     def execute(
         self,
         rebalance_date: str,

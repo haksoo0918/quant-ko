@@ -834,3 +834,83 @@ def test_daily_monitor_heartbeat_disabled(store):
     assert len(res) == 0
     assert len(notifier.sent_messages) == 0
 
+
+def test_rebalancer_is_d_minus_one_detection():
+    """리밸런싱 D-1일(월말 리밸런싱일 바로 전 거래일) 정상 판별 검증."""
+    rebalancer = LiveRebalancer(
+        store=MagicMock(),
+        kis_client=MagicMock(),
+        rebalance_freq="monthly",
+    )
+
+    # 2026년 3월 말 리밸런싱일은 2026-03-31 (화)
+    # 따라서 2026-03-30 (월)은 D-1일이어야 함
+    trading_days = [
+        "2026-03-27",
+        "2026-03-30",
+        "2026-03-31",
+        "2026-04-01",
+        "2026-04-02",
+    ]
+
+    assert rebalancer.is_rebalance_date("2026-03-31", trading_days) is True
+    assert rebalancer.is_d_minus_one("2026-03-30", trading_days) is True
+    assert rebalancer.is_d_minus_one("2026-03-27", trading_days) is False
+    assert rebalancer.is_d_minus_one("2026-03-31", trading_days) is False
+
+
+def test_rebalancer_send_d_minus_one_briefing(store):
+    """리밸런싱 전일(D-1) 18:00 사전 브리핑 디스코드 임베드 전송 검증."""
+    notifier = DiscordNotifier(mock_mode=True)
+    kis_mock = MagicMock(spec=KisClient)
+
+    # Balance: holds 000030, cash 2,000,000
+    kis_mock.fetch_balance.return_value = Balance(
+        cash=2_000_000.0,
+        total_eval_amount=2_500_000.0,
+        positions=[
+            Position(
+                ticker="000030",
+                name="퇴출대상C",
+                qty=100,
+                current_price=5000.0,
+                eval_amount=500_000.0,
+            )
+        ],
+    )
+
+    rebalancer = LiveRebalancer(
+        store=store,
+        kis_client=kis_mock,
+        notifier=notifier,
+        env="mock",
+        strategy_mode="seasonality",
+    )
+
+    trading_days = [
+        "2026-03-27",
+        "2026-03-30",
+        "2026-03-31",
+        "2026-04-01",
+    ]
+
+    res = rebalancer.send_d_minus_one_briefing(
+        as_of_date="2026-03-30",
+        trading_days=trading_days,
+        universe_kwargs={"market_cap_quantile": 1.0},
+    )
+
+    assert res["success"] is True
+    assert res["target_date"] == "2026-03-31"
+    assert len(notifier.sent_messages) == 1
+
+    embed = notifier.sent_messages[0]["embeds"][0]
+    assert "D-1 사전 안내" in embed["title"]
+    assert "2026-03-31" in embed["title"]
+
+    field_map = {f["name"]: f["value"] for f in embed["fields"]}
+    assert "2026-03-31" in field_map["리밸런싱 예정일"]
+    assert "SEASONALITY" in field_map["운용 전략 / 환경"]
+    assert "예수금" in field_map["계좌 잔고 요약"]
+
+
