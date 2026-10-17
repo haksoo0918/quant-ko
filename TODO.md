@@ -17,10 +17,11 @@
 - [x] **1. 서버 기본 환경 셋업**: 한국 시간(KST) 동기화, `quant-ko` 클론, 가상환경 및 패키지 설치 완료
 - [x] **2. 환경변수 및 데이터베이스 파일 배치**: `.env` 및 10.5개년 실측 DB(`data/quant_ko.db`, 98MB) 이식 완료
 - [x] **3. 리눅스 크론탭(`crontab`) 365일 무인 스케줄 등록**:
-  - 평일 08:30 관리종목/환기종목 일일 감시 및 비상 청산 (`--mode monitor`)
+  - 평일 08:30 관리종목/환기종목 일일 감시 및 생존 확인 알림 (`--mode monitor`)
   - 평일 15:20 월별 리밸런싱 장마감 시장가 자동 주문 (모의투자 상시 모드: `--mode rebalance --strategy standard`)
+  - 평일 18:00 리밸런싱 전일(D-1) 사전 브리핑 알림 (`--mode preview --strategy standard`)
 - [x] **4. 크론탭 프로세스 장애 격리**: `git pull origin dev` 실패 시에도 매매 봇이 중단되지 않도록 `(git pull origin dev >> deploy.log 2>&1 || true) && ...` 구문 적용 완료
-- [x] **5. GitHub Actions CI/CD 배포 파이프라인 구축**: `.github/workflows/deploy.yml` (SSH 자동 배포 및 크론탭 갱신) 및 `ci.yml` (테스트 94개, Ruff 린트 자동 검증) 완료
+- [x] **5. GitHub Actions CI/CD 배포 파이프라인 구축**: `.github/workflows/deploy.yml` (SSH 자동 배포 및 크론탭 3대 스케줄 자동 갱신) 및 `ci.yml` (테스트 98개, Ruff 린트 자동 검증) 완료
 - [x] **6. Git 머지/푸시 보호 훅 구축**: `.githooks/`를 통해 모든 브랜치 머지 및 푸시 시 사용자 명시적 승인 강제 적용 완료
 
 ### ~~[Phase 5] 20년 장기 과거 데이터 확보 (작업 중단 / De-scoped)~~

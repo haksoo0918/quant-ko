@@ -56,6 +56,7 @@ jobs:
           (crontab -l 2>/dev/null | grep -v 'quant-ko'; cat << 'EOF'
           30 8 * * 1-5 cd /home/ubuntu/quant-ko && (git pull origin dev >> /home/ubuntu/quant-ko/deploy.log 2>&1 || true) && /home/ubuntu/quant-ko/.venv/bin/python -m quant_ko.main --mode monitor --env mock >> /home/ubuntu/quant-ko/monitor.log 2>&1
           20 15 * * 1-5 cd /home/ubuntu/quant-ko && (git pull origin dev >> /home/ubuntu/quant-ko/deploy.log 2>&1 || true) && /home/ubuntu/quant-ko/.venv/bin/python -m quant_ko.main --mode rebalance --env mock --strategy standard >> /home/ubuntu/quant-ko/rebalance.log 2>&1
+          0 18 * * 1-5 cd /home/ubuntu/quant-ko && (git pull origin dev >> /home/ubuntu/quant-ko/deploy.log 2>&1 || true) && /home/ubuntu/quant-ko/.venv/bin/python -m quant_ko.main --mode preview --env mock --strategy standard >> /home/ubuntu/quant-ko/preview.log 2>&1
           EOF
           ) | crontab -
           RUN_MODE="${{ github.event.inputs.run_mode }}"

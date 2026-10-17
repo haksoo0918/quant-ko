@@ -118,7 +118,7 @@ class LiveRebalancer:
     def is_d_minus_one(self, date: str, trading_days: list[str]) -> bool:
         """Check if given date is D-1 (the trading day immediately preceding rebalance date)."""
         norm = normalize_date(date)
-        sorted_days = sorted(list({normalize_date(d) for d in trading_days}))
+        sorted_days = sorted({normalize_date(d) for d in trading_days})
         if norm not in sorted_days:
             return False
         idx = sorted_days.index(norm)
@@ -139,7 +139,7 @@ class LiveRebalancer:
         norm_date = normalize_date(as_of_date)
         if not trading_days:
             trading_days = self.store.get_trading_days()
-        sorted_days = sorted(list({normalize_date(d) for d in trading_days}))
+        sorted_days = sorted({normalize_date(d) for d in trading_days})
 
         target_reb_date = norm_date
         if norm_date in sorted_days:

@@ -101,6 +101,9 @@ chmod 600 .env
 
 # [quant-ko] 평일 15:20 월별 리밸런싱 시장가 자동 주문 (git pull 실패해도 기존 코드로 무조건 실행, 모의투자 표준 모드)
 20 15 * * 1-5 cd /home/ubuntu/quant-ko && (git pull origin dev >> /home/ubuntu/quant-ko/deploy.log 2>&1 || true) && /home/ubuntu/quant-ko/.venv/bin/python -m quant_ko.main --mode rebalance --env mock --strategy standard >> /home/ubuntu/quant-ko/rebalance.log 2>&1
+
+# [quant-ko] 평일 18:00 리밸런싱 전일(D-1) 사전 브리핑 (D-1일이 아니면 무반응 자동 종료)
+0 18 * * 1-5 cd /home/ubuntu/quant-ko && (git pull origin dev >> /home/ubuntu/quant-ko/deploy.log 2>&1 || true) && /home/ubuntu/quant-ko/.venv/bin/python -m quant_ko.main --mode preview --env mock --strategy standard >> /home/ubuntu/quant-ko/preview.log 2>&1
 EOF
 ) | crontab -
 ```
