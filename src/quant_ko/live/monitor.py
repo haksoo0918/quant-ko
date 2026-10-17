@@ -4,7 +4,7 @@ import logging
 from typing import Any
 
 from quant_ko.broker.kis import KisClient
-from quant_ko.data.krx import normalize_date
+from quant_ko.data.krx import KrxClient, normalize_date
 from quant_ko.data.store import DataStore
 from quant_ko.notify.discord import DiscordNotifier
 
@@ -23,11 +23,15 @@ class DailyMonitor:
         kis_client: KisClient,
         notifier: DiscordNotifier | None = None,
         env: str = "mock",
+        krx_client: KrxClient | None = None,
+        order_type: str = "01",
     ) -> None:
         self.store = store
         self.kis_client = kis_client
         self.notifier = notifier
         self.env = env
+        self.krx_client = krx_client
+        self.order_type = order_type
 
     def check_and_liquidate(
         self, as_of_date: str, send_heartbeat: bool = True
@@ -42,6 +46,17 @@ class DailyMonitor:
         If all positions are healthy and send_heartbeat is True, sends morning ping report.
         """
         norm_date = normalize_date(as_of_date)
+
+        # 0. KRX 실시간 관리종목 API 선제 동기화 (제공된 경우)
+        if self.krx_client is not None:
+            try:
+                latest_desigs = self.krx_client.fetch_designations(as_of_date=norm_date)
+                if latest_desigs:
+                    self.store.upsert_designations(latest_desigs)
+                    logger.info("Synced %d real-time designations from KRX for %s", len(latest_desigs), norm_date)
+            except Exception as e:
+                logger.warning("Failed to fetch real-time KRX designations (fallback to local DB): %s", e)
+
         balance = self.kis_client.fetch_balance()
         held_positions = {p.ticker: p for p in balance.positions if p.qty > 0}
 
@@ -78,6 +93,7 @@ class DailyMonitor:
                                     side="SELL",
                                     qty=pos.qty,
                                     price=price,
+                                    order_type=self.order_type,
                                 )
                                 order_id = self.store.insert_order(
                                     {

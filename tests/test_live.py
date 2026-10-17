@@ -373,6 +373,7 @@ def test_daily_monitor_liquidates_designated_stock(store):
         side="SELL",
         qty=50,
         price=9500.0,
+        order_type="01",
     )
 
 
@@ -912,5 +913,121 @@ def test_rebalancer_send_d_minus_one_briefing(store):
     assert "2026-03-31" in field_map["리밸런싱 예정일"]
     assert "SEASONALITY" in field_map["운용 전략 / 환경"]
     assert "예수금" in field_map["계좌 잔고 요약"]
+
+
+def test_rebalancer_automatically_resolves_prior_trading_day_as_pit_date(store):
+    """실전 리밸런싱 시 pit_date를 생략해도 직전 거래일을 자동으로 산출하여 미래참조를 차단하는지 검증."""
+    notifier = DiscordNotifier(mock_mode=True)
+    kis_mock = MagicMock(spec=KisClient)
+
+    kis_mock.fetch_balance.return_value = Balance(
+        cash=2_000_000.0,
+        total_eval_amount=2_000_000.0,
+        positions=[],
+    )
+    kis_mock.fetch_current_price.return_value = 10000.0
+    kis_mock.place_order.return_value = OrderResult(
+        order_no="ORD001",
+        ticker="000010",
+        side="BUY",
+        qty=10,
+        price=10000.0,
+        success=True,
+    )
+
+    rebalancer = LiveRebalancer(
+        store=store,
+        kis_client=kis_mock,
+        notifier=notifier,
+        env="mock",
+    )
+
+    # store has prices for 2026-03-31 and 2026-04-01
+    prior_day = rebalancer.get_prior_trading_day("2026-04-01")
+    assert prior_day == "2026-03-31"
+
+    # Execute without pit_date
+    result = rebalancer.execute(
+        rebalance_date="2026-04-01",
+        pit_date=None,
+        universe_kwargs={"market_cap_quantile": 1.0},
+    )
+
+    assert result["success"] is True
+    assert result["pit_date"] == "2026-03-31"
+
+
+def test_daily_monitor_syncs_realtime_designations_from_krx(store):
+    """08:30 감시 실행 시 KRX 실시간 관리종목 API를 선제 호출하여 DB를 갱신하고 청산하는지 검증."""
+    from quant_ko.data.krx import KrxClient
+
+    notifier = DiscordNotifier(mock_mode=True)
+    kis_mock = MagicMock(spec=KisClient)
+    krx_mock = MagicMock(spec=KrxClient)
+
+    # Initially, store has NO designations for 000010
+    # KRX API returns real-time designation today
+    krx_mock.fetch_designations.return_value = [
+        {
+            "ticker": "000010",
+            "type": "관리종목",
+            "start_date": "2026-04-06",
+            "end_date": None,
+        }
+    ]
+
+    kis_mock.fetch_balance.return_value = Balance(
+        cash=1_000_000.0,
+        total_eval_amount=2_000_000.0,
+        positions=[
+            Position(
+                ticker="000010",
+                name="위험주",
+                qty=100,
+                current_price=10000.0,
+                eval_amount=1_000_000.0,
+            ),
+        ],
+    )
+    kis_mock.fetch_current_price.return_value = 9500.0
+    kis_mock.place_order.return_value = OrderResult(
+        order_no="LIQ_KRX_01",
+        ticker="000010",
+        side="SELL",
+        qty=100,
+        price=9500.0,
+        success=True,
+    )
+
+    monitor = DailyMonitor(
+        store=store,
+        kis_client=kis_mock,
+        notifier=notifier,
+        env="mock",
+        krx_client=krx_mock,
+        order_type="00",  # limit order for morning auction
+    )
+
+    liquidated = monitor.check_and_liquidate(as_of_date="2026-04-06")
+
+    # Verify KRX real-time API was called
+    krx_mock.fetch_designations.assert_called_once_with(as_of_date="2026-04-06")
+
+    # Verify designation was upserted into store
+    db_desigs = store.get_designations(as_of_date="2026-04-06")
+    assert not db_desigs.empty
+    assert "000010" in db_desigs["ticker"].values
+
+    # Verify liquidation order executed with order_type="00"
+    assert len(liquidated) == 1
+    kis_mock.place_order.assert_called_once_with(
+        ticker="000010",
+        side="SELL",
+        qty=100,
+        price=9500.0,
+        order_type="00",
+    )
+
+
 
 

@@ -14,6 +14,16 @@ from quant_ko.data.krx import (
 from quant_ko.data.store import DataStore
 from quant_ko.pit.builder import PITSnapshotBuilder
 
+PARKING_MONTHS = {5, 6, 7, 8, 9, 10}
+
+
+def is_seasonality_parking_period(date_str: str) -> bool:
+    """5~10월 안전 자산(CD금리 ETF) 대피 구간 여부 판정."""
+    from datetime import datetime
+
+    dt = datetime.strptime(normalize_date(date_str), "%Y-%m-%d")
+    return dt.month in PARKING_MONTHS
+
 
 def filter_universe(
     store: DataStore,

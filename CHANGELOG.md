@@ -5,6 +5,24 @@
 
 ---
 
+## [1.3.0] - 2026-10-17
+
+### 추가 및 개선 (Added & Changed)
+- **실전 리밸런싱 직전 영업일 PIT 자동 연동 (`src/quant_ko/live/rebalancer.py`)**:
+  - `pit_date` 미전달 시 `store.get_trading_days()` 기반 직전 영업일(`prior_trading_day`) 자동 산출 주입으로 미래참조 결함 원천 차단.
+- **08:30 일일 감시 봇 모닝 생존 확인(Heartbeat) 및 실시간 공시 선제 동기화 (`src/quant_ko/live/monitor.py`)**:
+  - 평일 08:30 정상 가동 확인 모닝 브리핑 전송 (`--no-heartbeat` 플래그 지원).
+  - KRX OpenAPI 실시간 관리/환기종목 공시 선제 동기화 및 시장가(`01`) 긴급 청산 지원.
+- **리밸런싱 전일(D-1) 18:00 사전 브리핑 도입 (`src/quant_ko/live/rebalancer.py`)**:
+  - 리밸런싱 D-1일 18:00 예정 타깃 20종목, 현재 잔고, 교체 예정 내역 사전 예고 알림 (`--mode preview` 연동).
+- **계절성 파킹 판정 단일 소스화 (`src/quant_ko/strategy/universe.py`)**:
+  - `PARKING_MONTHS` 및 `is_seasonality_parking_period()` 공통 유틸리티 모듈화 및 전역 적용.
+- **오라클 VM 3대 무인 크론탭 스케줄 반영 (`.github/workflows/deploy.yml`, `docs/oci_deployment_guide.md`)**:
+  - 08:30 감시, 15:20 매매, 18:00 D-1 브리핑 자동 최신화 파이프라인 정립.
+- **테스트 스위트 확장**: 총 100개 테스트 전원 통과 (All-Green, 100%).
+
+---
+
 ## [1.2.0] - 2026-10-16
 
 ### 추가 및 변경 (Added & Changed)
