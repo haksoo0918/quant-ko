@@ -44,10 +44,11 @@ jobs:
         pytest -v
 
     - name: Deploy to Oracle Cloud VM via SSH
+      if: ${{ secrets.ORACLE_HOST != '' && secrets.ORACLE_SSH_KEY != '' }}
       uses: appleboy/ssh-action@v1.2.0
       with:
         host: ${{ secrets.ORACLE_HOST }}
-        username: ${{ secrets.ORACLE_USER }}
+        username: ${{ secrets.ORACLE_USER || 'ubuntu' }}
         key: ${{ secrets.ORACLE_SSH_KEY }}
         script: |
           cd /home/ubuntu/quant-ko
