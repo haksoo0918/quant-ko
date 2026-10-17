@@ -19,6 +19,9 @@
 - [x] **3. 리눅스 크론탭(`crontab`) 365일 무인 스케줄 등록**:
   - 평일 08:30 관리종목/환기종목 일일 감시 및 비상 청산 (`--mode monitor`)
   - 평일 15:20 월별 리밸런싱 장마감 시장가 자동 주문 (모의투자 상시 모드: `--mode rebalance --strategy standard`)
+- [x] **4. 크론탭 프로세스 장애 격리**: `git pull origin dev` 실패 시에도 매매 봇이 중단되지 않도록 `(git pull origin dev >> deploy.log 2>&1 || true) && ...` 구문 적용 완료
+- [x] **5. GitHub Actions CI/CD 배포 파이프라인 구축**: `.github/workflows/deploy.yml` (SSH 자동 배포 및 크론탭 갱신) 및 `ci.yml` (테스트 94개, Ruff 린트 자동 검증) 완료
+- [x] **6. Git 머지/푸시 보호 훅 구축**: `.githooks/`를 통해 모든 브랜치 머지 및 푸시 시 사용자 명시적 승인 강제 적용 완료
 
 ### ~~[Phase 5] 20년 장기 과거 데이터 확보 (작업 중단 / De-scoped)~~
 > **결정 사유 (2026-10-12 사용자 지시)**:  
@@ -77,6 +80,6 @@
   - [x] 통합 운영 CLI (`quant_ko.main`: status, rebalance, monitor)
   - [x] 윈도우 작업 스케줄러 자동 등록 스크립트 (`scripts/setup_windows_scheduler.ps1`)
 - [x] **품질 검증 & 코드리뷰**
-  - [x] 단위/통합 테스트 88개 전원 통과 (All-Green)
+  - [x] 단위/통합 테스트 94개 전원 통과 (All-Green)
   - [x] Ruff 린트/포맷터 0 errors / 0 warnings 완벽 준수
   - [x] Standards & Spec 2축 코드리뷰 및 권장사항(지연 재시도 로직) 구현 완료
