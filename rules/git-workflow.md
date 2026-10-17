@@ -64,6 +64,18 @@ dev  (Daily development - Antigravity workspace)
 3. **Stage 3: Remote Push (On user instruction)**:
    - Push to `origin` ONLY when explicitly authorized by the user.
 
+### Git Hook Protection for `main` Branch (`.githooks/`)
+To physically guarantee that AI assistants or automated tools cannot push or merge into `main` without explicit human authorization:
+- **`pre-push` Hook**: Blocks all pushes to `refs/heads/main` unless an approval token is present.
+  - Authorization method:
+    - One-time token file: `New-Item .git/ALLOW_MAIN_PUSH` (automatically consumed and deleted upon push).
+    - Environment variable: `$env:ALLOW_MAIN_PUSH="1"` (PowerShell) or `ALLOW_MAIN_PUSH=1` (Bash).
+- **`pre-merge-commit` Hook**: Blocks merge commits when on `main` branch unless authorized.
+  - Authorization method:
+    - One-time token file: `New-Item .git/ALLOW_MAIN_MERGE` (automatically consumed).
+    - Environment variable: `$env:ALLOW_MAIN_MERGE="1"` or `$env:ALLOW_MAIN_PUSH="1"`.
+- Routine commits and pushes on the `dev` branch are completely unrestricted.
+
 ---
 
 ## 4. Releases & Semantic Versioning (SemVer) Strategy

@@ -1,0 +1,38 @@
+#!/bin/sh
+# .githooks/pre-merge-commit
+# 모든 브랜치 머지 커밋 보호 훅 (사용자 승인 시에만 통과)
+
+token_file=".git/ALLOW_MERGE"
+token_push=".git/ALLOW_PUSH"
+
+# 1. 환경변수 또는 1회성 승인 토큰 파일 확인
+if [ "$ALLOW_MERGE" = "1" ] || [ "$ALLOW_PUSH" = "1" ] || [ -f "$token_file" ] || [ -f "$token_push" ]; then
+    rm -f "$token_file" "$token_push" 2>/dev/null
+    echo "✅ [승인 확인] 머지 승인이 확인되었습니다. 머지 커밋을 진행합니다."
+    exit 0
+fi
+
+# 2. 대화형 터미널(TTY)인 경우 사용자에게 즉석 확인 요청
+if [ -t 0 ] && [ -r /dev/tty ]; then
+    if exec < /dev/tty 2>/dev/null; then
+        echo "⚠️  [경고] 브랜치 머지(Merge)가 감지되었습니다."
+        read -p "사용자 승인: 정말 머지를 진행하시겠습니까? (yes/N): " answer
+        case "$answer" in
+            [Yy][Ee][Ss])
+                echo "✅ [사용자 승인] 머지를 진행합니다."
+                exit 0
+                ;;
+            *)
+                echo "❌ [머지 차단] 사용자가 머지를 승인하지 않았습니다."
+                exit 1
+                ;;
+        esac
+    fi
+fi
+
+# 3. 비대화형 환경이거나 승인 플래그가 없는 경우 즉시 물리적 차단
+echo "❌ [머지 차단] 모든 브랜치 머지는 사용자의 명시적 승인이 있어야만 가능합니다."
+echo "💡 승인 방법:"
+echo "   1) 1회성 토큰 발급: New-Item .git/ALLOW_MERGE (PowerShell) 또는 touch .git/ALLOW_MERGE (Bash)"
+echo "   2) 환경변수 설정:   \$env:ALLOW_MERGE=\"1\" (PowerShell) 또는 ALLOW_MERGE=1 (Bash)"
+exit 1

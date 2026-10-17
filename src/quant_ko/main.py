@@ -82,9 +82,9 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="quant-ko Live / Mock Quantitative Trading CLI")
     parser.add_argument(
         "--mode",
-        choices=["rebalance", "monitor", "status"],
+        choices=["rebalance", "monitor", "status", "preview"],
         default="status",
-        help="Execution mode: rebalance, monitor, or status",
+        help="Execution mode: rebalance, monitor, status, or preview (D-1 advance briefing)",
     )
     parser.add_argument(
         "--env",
@@ -120,6 +120,11 @@ def main() -> None:
         action="store_true",
         help="Force execution even if target date is not a scheduled rebalancing date",
     )
+    parser.add_argument(
+        "--no-heartbeat",
+        action="store_true",
+        help="Suppress morning heartbeat Discord notification in monitor mode",
+    )
 
     args = parser.parse_args()
     target_date = args.date or get_current_date()
@@ -145,11 +150,43 @@ def main() -> None:
             env=args.env,
         )
         logger.info("Executing daily designation check for %s...", target_date)
-        res = monitor.check_and_liquidate(as_of_date=target_date)
+        res = monitor.check_and_liquidate(
+            as_of_date=target_date,
+            send_heartbeat=not args.no_heartbeat,
+        )
         if res:
             logger.warning("Emergency liquidated %d designated stocks!", len(res))
         else:
             logger.info("Designation check complete: All held positions healthy (0 issues).")
+
+    elif args.mode == "preview":
+        rebalancer = LiveRebalancer(
+            store=store,
+            kis_client=kis_client,
+            notifier=notifier,
+            env=args.env,
+            strategy_mode=args.strategy,
+        )
+
+        trading_days = store.get_trading_days()
+        if not args.force and not rebalancer.is_d_minus_one(target_date, trading_days):
+            logger.info(
+                "오늘(%s)은 리밸런싱 D-1일이 아닙니다 (매월 마지막 거래일 전 영업일). 작업을 안전하게 종료합니다.",
+                target_date,
+            )
+            sys.exit(0)
+
+        logger.info("Executing D-1 rebalance preview briefing on %s...", target_date)
+        res = rebalancer.send_d_minus_one_briefing(as_of_date=target_date, trading_days=trading_days)
+        if res.get("success"):
+            logger.info(
+                "D-1 리밸런싱 사전 브리핑 전송 완료 (리밸런싱 예정일: %s, 예정 타깃: %d개)",
+                res.get("target_date"),
+                len(res.get("target_tickers", [])),
+            )
+        else:
+            logger.error("D-1 사전 브리핑 실패")
+            sys.exit(1)
 
     elif args.mode == "rebalance":
         rebalancer = LiveRebalancer(
