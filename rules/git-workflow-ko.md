@@ -64,6 +64,18 @@ dev  (일상 개발 - Antigravity 바이브코딩 작업 공간)
 3. **3단계: 원격 푸시 (사용자 지시 시)**:
    - 사용자의 명시적인 푸시 지시가 있을 때만 `origin`에 푸시.
 
+### `main` 브랜치 Git 훅 승인 보호 장치 (`.githooks/`)
+AI 또는 자동화 도구가 사용자의 명시적 승인 없이 자의적으로 `main` 브랜치에 머지하거나 푸시하지 못하도록 물리적으로 강제 차단합니다:
+- **`pre-push` 훅**: `main` 브랜치로 푸시할 때 승인 토큰이 없으면 즉시 차단 (`exit 1`).
+  - 승인 허용 방법:
+    - 1회성 토큰 파일: `New-Item .git/ALLOW_MAIN_PUSH` (푸시 성공 시 훅이 자동으로 파일 삭제).
+    - 프로세스 환경변수: `$env:ALLOW_MAIN_PUSH="1"` (PowerShell) 또는 `ALLOW_MAIN_PUSH=1` (Bash).
+- **`pre-merge-commit` 훅**: `main` 브랜치에서 머지 커밋을 생성할 때 승인 토큰이 없으면 즉시 차단.
+  - 승인 허용 방법:
+    - 1회성 토큰 파일: `New-Item .git/ALLOW_MAIN_MERGE` (머지 완료 시 자동 삭제).
+    - 프로세스 환경변수: `$env:ALLOW_MAIN_MERGE="1"` 또는 `$env:ALLOW_MAIN_PUSH="1"`.
+- 일상 개발용 `dev` 브랜치 커밋 및 푸시는 아무런 제약 없이 상시 자유롭게 수행됩니다.
+
 ---
 
 ## 4. 릴리즈 및 시맨틱 버저닝 (SemVer) 전략
