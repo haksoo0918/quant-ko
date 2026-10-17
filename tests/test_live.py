@@ -477,7 +477,9 @@ def test_daily_monitor_no_action_when_healthy(store):
     liquidated = monitor.check_and_liquidate(as_of_date="2026-04-06")
     assert len(liquidated) == 0
     kis_mock.place_order.assert_not_called()
-    assert len(notifier.sent_messages) == 0
+    # 하트비트 생존 알림은 1건 정상 발송되어야 함 (긴급 매도는 없음)
+    assert len(notifier.sent_messages) == 1
+    assert "08:30 일일 감시 봇 생존 확인" in notifier.sent_messages[0]["embeds"][0]["title"]
 
 
 def test_rebalancer_comprehensive_discord_notification(store):
@@ -756,3 +758,79 @@ def test_chunk_field_lines_splits_large_content():
     assert chunks[1]["name"] == "🔴 매도 체결 상세 (40건) (2)"
     for c in chunks:
         assert len(c["value"]) <= 500
+
+
+def test_daily_monitor_sends_heartbeat_when_all_healthy(store):
+    """위험 지정 종목이 없을 때 매일 아침 정상 가동 생존 확인(Heartbeat) 알림이 전송되는지 검증."""
+    notifier = DiscordNotifier(mock_mode=True)
+    kis_mock = MagicMock(spec=KisClient)
+
+    # Balance: 2 positions, healthy
+    kis_mock.fetch_balance.return_value = Balance(
+        cash=1_500_000.0,
+        total_eval_amount=4_500_000.0,
+        positions=[
+            Position(
+                ticker="000010",
+                name="회사A",
+                qty=100,
+                current_price=10000.0,
+                eval_amount=1_000_000.0,
+            ),
+            Position(
+                ticker="000020",
+                name="회사B",
+                qty=100,
+                current_price=20000.0,
+                eval_amount=2_000_000.0,
+            ),
+        ],
+    )
+
+    monitor = DailyMonitor(
+        store=store,
+        kis_client=kis_mock,
+        notifier=notifier,
+        env="mock",
+    )
+
+    # No designations exist in store
+    res = monitor.check_and_liquidate(as_of_date="2026-04-06", send_heartbeat=True)
+
+    assert len(res) == 0
+    assert len(notifier.sent_messages) == 1
+
+    embed = notifier.sent_messages[0]["embeds"][0]
+    assert "08:30 일일 감시 봇 생존 확인" in embed["title"]
+    assert embed["color"] == 0x2ECC71  # Green
+
+    field_map = {f["name"]: f["value"] for f in embed["fields"]}
+    assert "2026-04-06" in field_map["기준 일자"]
+    assert "MOCK" in field_map["운용 환경"]
+    assert "2개" in field_map["보유 종목 수"]
+    assert "이상 없음" in field_map["감시 결과"]
+
+
+def test_daily_monitor_heartbeat_disabled(store):
+    """send_heartbeat=False 시 정상 상태에서 알림이 전송되지 않는지 검증."""
+    notifier = DiscordNotifier(mock_mode=True)
+    kis_mock = MagicMock(spec=KisClient)
+
+    kis_mock.fetch_balance.return_value = Balance(
+        cash=1_500_000.0,
+        total_eval_amount=1_500_000.0,
+        positions=[],
+    )
+
+    monitor = DailyMonitor(
+        store=store,
+        kis_client=kis_mock,
+        notifier=notifier,
+        env="mock",
+    )
+
+    res = monitor.check_and_liquidate(as_of_date="2026-04-06", send_heartbeat=False)
+
+    assert len(res) == 0
+    assert len(notifier.sent_messages) == 0
+

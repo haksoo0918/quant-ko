@@ -120,6 +120,11 @@ def main() -> None:
         action="store_true",
         help="Force execution even if target date is not a scheduled rebalancing date",
     )
+    parser.add_argument(
+        "--no-heartbeat",
+        action="store_true",
+        help="Suppress morning heartbeat Discord notification in monitor mode",
+    )
 
     args = parser.parse_args()
     target_date = args.date or get_current_date()
@@ -145,7 +150,10 @@ def main() -> None:
             env=args.env,
         )
         logger.info("Executing daily designation check for %s...", target_date)
-        res = monitor.check_and_liquidate(as_of_date=target_date)
+        res = monitor.check_and_liquidate(
+            as_of_date=target_date,
+            send_heartbeat=not args.no_heartbeat,
+        )
         if res:
             logger.warning("Emergency liquidated %d designated stocks!", len(res))
         else:
