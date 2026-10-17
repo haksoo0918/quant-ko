@@ -230,6 +230,26 @@ class DataStore:
         with self.get_connection() as conn:
             return pd.read_sql_query(query, conn, params=params)
 
+    def get_trading_days(
+        self,
+        start_date: str | None = None,
+        end_date: str | None = None,
+    ) -> list[str]:
+        """Retrieve distinct trading days from daily_prices sorted ascending."""
+        query = "SELECT DISTINCT date FROM daily_prices WHERE 1=1"
+        params: list[Any] = []
+        if start_date:
+            query += " AND date >= ?"
+            params.append(start_date)
+        if end_date:
+            query += " AND date <= ?"
+            params.append(end_date)
+        query += " ORDER BY date ASC"
+
+        with self.get_connection() as conn:
+            cursor = conn.execute(query, params)
+            return [row[0] for row in cursor.fetchall()]
+
     def upsert_financials(self, records: list[dict[str, Any]] | pd.DataFrame) -> None:
         """Insert or replace quarterly/annual financial statement metrics."""
         if isinstance(records, pd.DataFrame):

@@ -11,7 +11,7 @@ from quant_ko.data.krx import normalize_date
 from quant_ko.data.store import DataStore
 from quant_ko.notify.discord import DiscordNotifier
 from quant_ko.strategy.scoring import score_and_select
-from quant_ko.strategy.universe import filter_universe
+from quant_ko.strategy.universe import filter_universe, is_seasonality_parking_period
 
 logger = logging.getLogger(__name__)
 
@@ -155,8 +155,7 @@ class LiveRebalancer:
         held_positions = {p.ticker: p for p in balance.positions if p.qty > 0}
 
         # 2. Strategy target calculation
-        dt = datetime.strptime(target_reb_date, "%Y-%m-%d")
-        is_parking_period = self.strategy_mode == "seasonality" and dt.month in [5, 6, 7, 8, 9, 10]
+        is_parking_period = self.strategy_mode == "seasonality" and is_seasonality_parking_period(target_reb_date)
 
         target_tickers: list[str] = []
         if is_parking_period:
@@ -253,6 +252,20 @@ class LiveRebalancer:
         }
 
 
+    def get_prior_trading_day(self, date: str, trading_days: list[str] | None = None) -> str:
+        """Find the trading day immediately preceding the given date."""
+        from datetime import datetime, timedelta
+
+        norm = normalize_date(date)
+        if not trading_days:
+            trading_days = self.store.get_trading_days()
+        sorted_days = sorted({normalize_date(d) for d in trading_days})
+        prior_days = [d for d in sorted_days if d < norm]
+        if prior_days:
+            return prior_days[-1]
+        # Fallback to previous calendar day
+        return (datetime.strptime(norm, "%Y-%m-%d") - timedelta(days=1)).strftime("%Y-%m-%d")
+
     def execute(
         self,
         rebalance_date: str,
@@ -273,7 +286,7 @@ class LiveRebalancer:
         6. Sends Discord summary notification.
         """
         norm_reb_date = normalize_date(rebalance_date)
-        norm_pit_date = normalize_date(pit_date) if pit_date else norm_reb_date
+        norm_pit_date = normalize_date(pit_date) if pit_date else self.get_prior_trading_day(norm_reb_date)
 
         logger.info(
             "Starting rebalance on %s (PIT date: %s, mode: %s, dry_run: %s)",
@@ -289,10 +302,7 @@ class LiveRebalancer:
         held_positions = {p.ticker: p.qty for p in balance.positions if p.qty > 0}
 
         # 2. Determine target weights based on strategy mode
-        from datetime import datetime
-
-        dt = datetime.strptime(norm_reb_date, "%Y-%m-%d")
-        is_parking_period = self.strategy_mode == "seasonality" and dt.month in [5, 6, 7, 8, 9, 10]
+        is_parking_period = self.strategy_mode == "seasonality" and is_seasonality_parking_period(norm_reb_date)
 
         target_weights: dict[str, float] = {}
         if is_parking_period:
@@ -650,6 +660,7 @@ class LiveRebalancer:
         return {
             "success": True,
             "rebalance_date": norm_reb_date,
+            "pit_date": norm_pit_date,
             "total_equity": total_equity,
             "orders": executed_orders,
         }

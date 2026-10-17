@@ -20,10 +20,12 @@ from datetime import datetime
 from dotenv import load_dotenv
 
 from quant_ko.broker.kis import KisClient
+from quant_ko.data.krx import KrxClient
 from quant_ko.data.store import DataStore
 from quant_ko.live.monitor import DailyMonitor
 from quant_ko.live.rebalancer import LiveRebalancer
 from quant_ko.notify.discord import DiscordNotifier
+from quant_ko.strategy.universe import is_seasonality_parking_period
 
 if sys.stdout.encoding.lower() != "utf-8":
     try:
@@ -42,8 +44,7 @@ def get_current_date() -> str:
 
 def print_status(kis_client: KisClient, env: str, date_str: str) -> None:
     dt = datetime.strptime(date_str, "%Y-%m-%d")
-    month = dt.month
-    is_parking = month in [5, 6, 7, 8, 9, 10]
+    is_parking = is_seasonality_parking_period(date_str)
     season_desc = (
         "5~10월 CD금리 ETF (안전 대피 구간)"
         if is_parking
@@ -143,11 +144,14 @@ def main() -> None:
         print_status(kis_client=kis_client, env=args.env, date_str=target_date)
 
     elif args.mode == "monitor":
+        krx_client = KrxClient(offline_mode=False)
         monitor = DailyMonitor(
             store=store,
             kis_client=kis_client,
             notifier=notifier,
             env=args.env,
+            krx_client=krx_client,
+            order_type=args.order_type,
         )
         logger.info("Executing daily designation check for %s...", target_date)
         res = monitor.check_and_liquidate(
