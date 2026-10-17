@@ -96,11 +96,11 @@ chmod 600 .env
 
 ```bash
 (crontab -l 2>/dev/null | grep -v "quant-ko"; cat << 'EOF'
-# [quant-ko] 평일 08:30 관리종목/환기종목 일일 감시 (실행 전 git pull 자동 최신화)
-30 8 * * 1-5 cd /home/ubuntu/quant-ko && git pull origin dev >> /home/ubuntu/quant-ko/deploy.log 2>&1 && /home/ubuntu/quant-ko/.venv/bin/python -m quant_ko.main --mode monitor --env mock >> /home/ubuntu/quant-ko/monitor.log 2>&1
+# [quant-ko] 평일 08:30 관리종목/환기종목 일일 감시 (git pull 실패해도 기존 코드로 무조건 실행)
+30 8 * * 1-5 cd /home/ubuntu/quant-ko && (git pull origin dev >> /home/ubuntu/quant-ko/deploy.log 2>&1 || true) && /home/ubuntu/quant-ko/.venv/bin/python -m quant_ko.main --mode monitor --env mock >> /home/ubuntu/quant-ko/monitor.log 2>&1
 
-# [quant-ko] 평일 15:20 월별 리밸런싱 장마감 시장가 자동 주문 (실행 전 git pull 자동 최신화, 모의투자 표준 모드)
-20 15 * * 1-5 cd /home/ubuntu/quant-ko && git pull origin dev >> /home/ubuntu/quant-ko/deploy.log 2>&1 && /home/ubuntu/quant-ko/.venv/bin/python -m quant_ko.main --mode rebalance --env mock --strategy standard >> /home/ubuntu/quant-ko/rebalance.log 2>&1
+# [quant-ko] 평일 15:20 월별 리밸런싱 시장가 자동 주문 (git pull 실패해도 기존 코드로 무조건 실행, 모의투자 표준 모드)
+20 15 * * 1-5 cd /home/ubuntu/quant-ko && (git pull origin dev >> /home/ubuntu/quant-ko/deploy.log 2>&1 || true) && /home/ubuntu/quant-ko/.venv/bin/python -m quant_ko.main --mode rebalance --env mock --strategy standard >> /home/ubuntu/quant-ko/rebalance.log 2>&1
 EOF
 ) | crontab -
 ```
