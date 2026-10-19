@@ -229,11 +229,12 @@ class KrxClient:
         session: requests.Session | None = None,
         api_key: str | None = None,
         offline: bool = False,
+        offline_mode: bool | None = None,
     ) -> None:
         self.base_url = base_url or self.DEFAULT_BASE_URL
         self.session = session or requests.Session()
         self.api_key = api_key
-        self.offline = offline
+        self.offline = offline_mode if offline_mode is not None else offline
 
         if not session:
             self.session.headers.update(
@@ -435,14 +436,16 @@ class KrxClient:
     def fetch_designations(
         self,
         date: str | None = None,
+        as_of_date: str | None = None,
     ) -> pd.DataFrame:
         """Fetch special issue designations (관리종목, 투자주의환기종목, 거래정지)."""
         payload = {
             "bld": "dbms/MDC/STAT/issue/MDCSTAT02401",
             "mktId": "ALL",
         }
-        if date:
-            payload["trdDd"] = normalize_date(date).replace("-", "")
+        target_date = date or as_of_date
+        if target_date:
+            payload["trdDd"] = normalize_date(target_date).replace("-", "")
 
         res_json = self._post(payload)
         items = res_json.get("OutBlock_1") or res_json.get("output") or res_json.get("block1") or []

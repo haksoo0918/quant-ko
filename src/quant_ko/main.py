@@ -144,7 +144,7 @@ def main() -> None:
         print_status(kis_client=kis_client, env=args.env, date_str=target_date)
 
     elif args.mode == "monitor":
-        krx_client = KrxClient(offline_mode=False)
+        krx_client = KrxClient()
         monitor = DailyMonitor(
             store=store,
             kis_client=kis_client,
