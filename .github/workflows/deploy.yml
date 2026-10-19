@@ -2,7 +2,7 @@ name: Deploy to Oracle Cloud VM
 
 on:
   push:
-    branches: [ main, dev ]
+    branches: [ main ]
     paths:
       - 'src/**'
       - 'tests/**'
@@ -45,11 +45,13 @@ jobs:
 
     - name: Deploy to Oracle Cloud VM via SSH
       if: ${{ secrets.ORACLE_HOST != '' && secrets.ORACLE_SSH_KEY != '' }}
+      continue-on-error: true
       uses: appleboy/ssh-action@v1.2.0
       with:
         host: ${{ secrets.ORACLE_HOST }}
         username: ${{ secrets.ORACLE_USER || 'ubuntu' }}
         key: ${{ secrets.ORACLE_SSH_KEY }}
+        timeout: 15s
         script: |
           cd /home/ubuntu/quant-ko
           git pull origin main || git pull origin dev
