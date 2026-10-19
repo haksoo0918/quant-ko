@@ -5,6 +5,21 @@
 
 ---
 
+## [1.3.1] - 2026-10-19
+
+### 수정 및 개선 (Fixed & Changed)
+- **일일 감시 봇 안정화 (`src/quant_ko/main.py`, `src/quant_ko/live/monitor.py`)**:
+  - `main.py` 감시 모드 실행 시 `KrxClient` 인자 불일치(TypeError) 수정.
+  - `monitor.py` KRX 실시간 공시 동기화 데이터프레임/리스트 호환성 보완.
+- **Git 브랜치 보호 정책 및 훅 체계 정립 (`.githooks/`, `rules/git-workflow.md`, `GEMINI.md`)**:
+  - `dev` 브랜치 원격(`origin/dev`) 푸시 물리적 원천 차단.
+  - `main` 브랜치 머지 및 원격 푸시 명시적 사용자 채팅 승인제 확립.
+  - 복잡한 로컬 토큰 파일 검사 방식 전면 폐지.
+- **문서 정비 (`PRD.md`, `TODO.md`)**:
+  - 불필요한 배포 가이드 문서 제거 및 크론탭 동기화 타깃 `main` 브랜치로 통일.
+
+---
+
 ## [1.3.0] - 2026-10-17
 
 ### 추가 및 개선 (Added & Changed)

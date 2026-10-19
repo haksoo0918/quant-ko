@@ -51,7 +51,7 @@ class DailyMonitor:
         if self.krx_client is not None:
             try:
                 latest_desigs = self.krx_client.fetch_designations(as_of_date=norm_date)
-                if latest_desigs:
+                if latest_desigs is not None and len(latest_desigs) > 0:
                     self.store.upsert_designations(latest_desigs)
                     logger.info("Synced %d real-time designations from KRX for %s", len(latest_desigs), norm_date)
             except Exception as e:

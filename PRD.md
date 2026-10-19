@@ -125,9 +125,9 @@
 - [x] **보안:** API 키, 계좌번호, 디스코드 웹훅은 `.env`로만 관리 (커밋 격리 완료)
 - [x] **배포 & 운영 인프라:**
   - OCI Always Free 리눅스 VM 크론탭 무인 자동화 (평일 08:30 감시 / 15:20 리밸런싱 / 18:00 D-1 사전 브리핑)
-  - 크론탭 장애 격리: `git pull origin dev` 실패 시에도 기존 코드로 매매가 정상 실행되도록 `|| true` 격리 완료
-  - GitHub Actions CI/CD (`deploy.yml`, `ci.yml`): 푸시 시 린트/테스트 자동 검증 및 오라클 VM 자동 배포
-  - Git 승인 훅 (`.githooks/`): 사용자의 명시적 승인 없이 원격 푸시 및 머지가 실행되지 않도록 물리적 강제 차단 장치 완비
+  - 크론탭 장애 격리: `git pull origin main` 실패 시에도 기존 코드로 매매가 정상 실행되도록 `|| true` 격리 완료
+  - GitHub Actions CI (`ci.yml`): `main` 브랜치 푸시 시 린트/테스트 자동 품질 게이트 검증
+  - Git 안전 장치 (`.githooks/`): `dev` 브랜치 원격 푸시 원천 차단 및 `main` 머지/푸시 사용자 채팅 승인제 확립
 
 ### P1 (Should-Have)
 

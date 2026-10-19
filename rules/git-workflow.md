@@ -53,28 +53,23 @@ dev  (Daily development - Antigravity workspace)
 
 **Commit, Merge, and Push are strictly independent sequential stages**:
 
-1. **Stage 1: `dev` Commit (Halt immediately upon completion)**:
+1. **Stage 1: `dev` Commit (Autonomous local commit, Remote push strictly FORBIDDEN)**:
    - Commit atomic units on `dev` branch with Korean commit format; stop immediately.
+   - **NEVER push `dev` to remote (`origin/dev`)**. `dev` is strictly a local workspace branch.
 2. **Stage 2: `main` Merge (On user instruction)**:
    - Verify tests, linters, PRD, and CHANGELOG before merging:
      ```bash
      git checkout main
      git merge dev --no-ff
      ```
-3. **Stage 3: Remote Push (On user instruction)**:
-   - Push to `origin` ONLY when explicitly authorized by the user.
+3. **Stage 3: Remote Push & Sync (`main` branch only, on explicit user instruction & approval)**:
+   - Remote push and sync is permitted **ONLY on `main` branch**.
+   - Push to `origin/main` ONLY when explicitly authorized by the user.
 
-### Git Hook Protection for `main` Branch (`.githooks/`)
-To physically guarantee that AI assistants or automated tools cannot push or merge into `main` without explicit human authorization:
-- **`pre-push` Hook**: Blocks all pushes to `refs/heads/main` unless an approval token is present.
-  - Authorization method:
-    - One-time token file: `New-Item .git/ALLOW_MAIN_PUSH` (automatically consumed and deleted upon push).
-    - Environment variable: `$env:ALLOW_MAIN_PUSH="1"` (PowerShell) or `ALLOW_MAIN_PUSH=1` (Bash).
-- **`pre-merge-commit` Hook**: Blocks merge commits when on `main` branch unless authorized.
-  - Authorization method:
-    - One-time token file: `New-Item .git/ALLOW_MAIN_MERGE` (automatically consumed).
-    - Environment variable: `$env:ALLOW_MAIN_MERGE="1"` or `$env:ALLOW_MAIN_PUSH="1"`.
-- Routine commits and pushes on the `dev` branch are completely unrestricted.
+### Git Hook Protection & Agent Guardrails (`.githooks/`)
+- **`dev` 원격 푸시 물리적 차단**: `.githooks/pre-push` 훅이 대상 브랜치가 `dev`인 푸시를 무조건 거부(`exit 1`)하므로 원격(`origin/dev`) 푸시가 원천 차단됩니다.
+- **`main` 머지 및 푸시 채팅 승인제**: 에이전트는 사용자가 대화창에서 명시적으로 지시/승인한 경우에만 `main` 머지 및 `origin/main` 푸시를 1회성으로 실행합니다.
+- **단일 작업 즉시 중단(Single Instruction Discipline)**: `dev` 커밋 완료 후 머지나 푸시를 임의로 연속 실행하지 않고 즉시 멈춥니다.
 
 ---
 
