@@ -45,4 +45,8 @@ Before taking actions in specific domains, always consult the specialized guidel
 10. **Deep Thinking on Directions**: Rigorously evaluate trade-offs, scalability, and edge cases across multiple angles rather than relying on surface-level intuition.
 11. **Ask Over Guessing**: Never guess unfamiliar domain rules or unverified APIs. Validate via official docs/MCP, and clarify ambiguities promptly via `ask_question`.
 12. **Execution Monitoring & Anti-Hang Discipline**: Never leave batch, collection, or long-running tasks unattended. Always run small sample benchmarks first to measure throughput and calculate ETA. Set explicit timeout checkpoints, actively monitor progress, detect bottlenecks early, and halt/report immediately if execution is unreasonably slow instead of idle waiting.
+13. **Strict Git Branch & Hook Discipline**:
+    - **`dev` 브랜치**: 로컬 커밋은 자율적으로 수행하되, 원격(`origin/dev`) 푸시는 엄격히 금지합니다.
+    - **`main` 브랜치**: `main`으로의 머지 및 원격(`origin/main`) 푸시/동기화는 반드시 사용자의 명시적 승인을 득한 후 실행합니다.
+    - **훅 우회 절대 금지**: 에이전트는 어떠한 경우에도 `.git/ALLOW_*` 토큰 파일을 임의 생성하거나 `--no-verify`로 Git 훅을 우회해서는 안 됩니다. 모든 승인은 인간 사용자가 직접 콘솔에서 수행해야 합니다.
 

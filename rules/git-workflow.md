@@ -53,28 +53,28 @@ dev  (Daily development - Antigravity workspace)
 
 **Commit, Merge, and Push are strictly independent sequential stages**:
 
-1. **Stage 1: `dev` Commit (Halt immediately upon completion)**:
+1. **Stage 1: `dev` Commit (Autonomous local commit, Remote push strictly FORBIDDEN)**:
    - Commit atomic units on `dev` branch with Korean commit format; stop immediately.
+   - **NEVER push `dev` to remote (`origin/dev`)**. `dev` is strictly a local workspace branch.
 2. **Stage 2: `main` Merge (On user instruction)**:
    - Verify tests, linters, PRD, and CHANGELOG before merging:
      ```bash
      git checkout main
      git merge dev --no-ff
      ```
-3. **Stage 3: Remote Push (On user instruction)**:
-   - Push to `origin` ONLY when explicitly authorized by the user.
+3. **Stage 3: Remote Push & Sync (`main` branch only, on explicit user instruction & approval)**:
+   - Remote push and sync is permitted **ONLY on `main` branch**.
+   - Push to `origin/main` ONLY when explicitly authorized by the user.
 
-### Git Hook Protection for `main` Branch (`.githooks/`)
-To physically guarantee that AI assistants or automated tools cannot push or merge into `main` without explicit human authorization:
-- **`pre-push` Hook**: Blocks all pushes to `refs/heads/main` unless an approval token is present.
-  - Authorization method:
-    - One-time token file: `New-Item .git/ALLOW_MAIN_PUSH` (automatically consumed and deleted upon push).
-    - Environment variable: `$env:ALLOW_MAIN_PUSH="1"` (PowerShell) or `ALLOW_MAIN_PUSH=1` (Bash).
-- **`pre-merge-commit` Hook**: Blocks merge commits when on `main` branch unless authorized.
-  - Authorization method:
-    - One-time token file: `New-Item .git/ALLOW_MAIN_MERGE` (automatically consumed).
-    - Environment variable: `$env:ALLOW_MAIN_MERGE="1"` or `$env:ALLOW_MAIN_PUSH="1"`.
-- Routine commits and pushes on the `dev` branch are completely unrestricted.
+### Git Hook Protection & Agent Guardrails (`.githooks/`)
+To physically guarantee that AI assistants or automated tools cannot push `dev`, or merge/push `main` without explicit human authorization:
+- **`dev` Remote Push Hard Block**: `pre-push` hook unconditionally rejects any push target containing `dev`. `origin/dev` push is impossible.
+- **`main` Merge Protection**: `pre-merge-commit` hook blocks merge commits on `main` branch unless user approval token (`ALLOW_MAIN_MERGE`) is present.
+- **`main` Push Protection**: `pre-push` hook blocks pushes to `main` branch unless user approval token (`ALLOW_MAIN_PUSH`) is present.
+- **Agent Self-Authorization Strictly Forbidden**:
+  - AI agents MUST NOT create `.git/ALLOW_*` token files autonomously.
+  - AI agents MUST NOT use `--no-verify` flag to bypass hooks.
+  - Token creation and environment variables must be issued directly by the human user.
 
 ---
 

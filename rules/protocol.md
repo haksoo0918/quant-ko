@@ -40,8 +40,9 @@ All AI coding assistants and autonomous agents operating in this workspace must 
 - **Comments & Sync**: Write Korean comments on functions/constants; sync bilingual rule changes simultaneously.
 
 ### Step 5: Final Review & Commit
-- **Single Instruction & Immediate Halt**: After user confirmation, commit atomically on `dev` in Korean Conventional Commits and **halt immediately**.
-- **Decoupled Steps**: A commit approval NEVER implies merge or push; each stage requires separate explicit instructions.
+- **Autonomous `dev` Commit & Immediate Halt**: Commit atomic units on `dev` in Korean Conventional Commits and **halt immediately**. **NEVER push `dev` to `origin`**.
+- **Decoupled Stages**: A commit approval NEVER implies merge or push. `main` merge and `origin/main` push require separate, explicit user instructions and authorization.
+- **Hook Protection**: AI agents must never self-generate `.git/ALLOW_*` tokens or use `--no-verify` to bypass hooks.
 - Write Korean release notes in `CHANGELOG.md` when merging into `main`.
 
 ---
