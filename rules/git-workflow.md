@@ -67,14 +67,9 @@ dev  (Daily development - Antigravity workspace)
    - Push to `origin/main` ONLY when explicitly authorized by the user.
 
 ### Git Hook Protection & Agent Guardrails (`.githooks/`)
-To physically guarantee that AI assistants or automated tools cannot push `dev`, or merge/push `main` without explicit human authorization:
-- **`dev` Remote Push Hard Block**: `pre-push` hook unconditionally rejects any push target containing `dev`. `origin/dev` push is impossible.
-- **`main` Merge Protection**: `pre-merge-commit` hook blocks merge commits on `main` branch unless user approval token (`ALLOW_MAIN_MERGE`) is present.
-- **`main` Push Protection**: `pre-push` hook blocks pushes to `main` branch unless user approval token (`ALLOW_MAIN_PUSH`) is present.
-- **Agent Self-Authorization Strictly Forbidden**:
-  - AI agents MUST NOT create `.git/ALLOW_*` token files autonomously.
-  - AI agents MUST NOT use `--no-verify` flag to bypass hooks.
-  - Token creation and environment variables must be issued directly by the human user.
+- **`dev` 원격 푸시 물리적 차단**: `.githooks/pre-push` 훅이 대상 브랜치가 `dev`인 푸시를 무조건 거부(`exit 1`)하므로 원격(`origin/dev`) 푸시가 원천 차단됩니다.
+- **`main` 머지 및 푸시 채팅 승인제**: 에이전트는 사용자가 대화창에서 명시적으로 지시/승인한 경우에만 `main` 머지 및 `origin/main` 푸시를 1회성으로 실행합니다.
+- **단일 작업 즉시 중단(Single Instruction Discipline)**: `dev` 커밋 완료 후 머지나 푸시를 임의로 연속 실행하지 않고 즉시 멈춥니다.
 
 ---
 
