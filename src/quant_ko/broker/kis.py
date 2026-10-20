@@ -99,17 +99,26 @@ class KisClient:
         self._access_token: str | None = None
         self._token_expires_at: float = 0.0
 
-    def get_access_token(self) -> str:
+    def get_access_token(self, force_refresh: bool = False) -> str:
         """Fetch or return cached OAuth access token (in-memory and file persistence)."""
         now = time.time()
+        import json
+
+        if force_refresh:
+            self._access_token = None
+            self._token_expires_at = 0.0
+            if os.path.exists(self.token_cache_file):
+                try:
+                    os.remove(self.token_cache_file)
+                except Exception:
+                    pass
+
         # 1. Check in-memory cache
         if self._access_token and now < self._token_expires_at - 60:
             return self._access_token
 
         # 2. Check file cache (KIS token is valid for 24 hours, limited to 1 request per minute)
-        import json
-
-        if os.path.exists(self.token_cache_file):
+        if not force_refresh and os.path.exists(self.token_cache_file):
             try:
                 with open(self.token_cache_file, encoding="utf-8") as f:
                     cache_data = json.load(f)
@@ -129,7 +138,7 @@ class KisClient:
             "appkey": self.app_key,
             "appsecret": self.app_secret,
         }
-        resp = self._request("POST", url, json=payload)
+        resp = self._request("POST", url, json=payload, auth_retry=False)
         resp.raise_for_status()
         data = resp.json()
 
@@ -149,15 +158,30 @@ class KisClient:
 
         return self._access_token
 
+    def _is_token_expired(self, resp: requests.Response) -> bool:
+        """Check if response indicates an expired or invalid OAuth access token."""
+        if resp.status_code == 401:
+            return True
+        try:
+            data = resp.json()
+            msg_cd = str(data.get("msg_cd") or "").strip()
+            # EGW00121: 유효하지 않은 token, EGW00123: 기간이 만료된 token, EGW00122: appkey 불일치
+            if msg_cd in {"EGW00121", "EGW00122", "EGW00123"}:
+                return True
+        except Exception:
+            pass
+        return False
+
     def _request(
         self,
         method: str,
         url: str,
         max_retries: int = 3,
         backoff_factor: float = 1.0,
+        auth_retry: bool = True,
         **kwargs: Any,
     ) -> requests.Response:
-        """Execute HTTP request with exponential backoff retry on network/server errors."""
+        """Execute HTTP request with exponential backoff retry on network/server errors and auto token refresh."""
         attempt = 0
         while True:
             attempt += 1
@@ -170,11 +194,30 @@ class KisClient:
                 else:
                     resp = self.session.request(method=m, url=url, **kwargs)
 
+                # Check for token expiration and auto-recover if enabled
+                if auth_retry and self._is_token_expired(resp):
+                    logger.warning(
+                        "KIS token expired/invalid (status=%d, msg=%s). Forcing token refresh and retrying request...",
+                        resp.status_code,
+                        resp.text[:120],
+                    )
+                    new_token = self.get_access_token(force_refresh=True)
+                    if "headers" in kwargs and isinstance(kwargs["headers"], dict):
+                        kwargs["headers"]["authorization"] = f"Bearer {new_token}"
+                    return self._request(
+                        method=method,
+                        url=url,
+                        max_retries=max_retries,
+                        backoff_factor=backoff_factor,
+                        auth_retry=False,
+                        **kwargs,
+                    )
+
                 if resp.status_code >= 500:
                     resp.raise_for_status()
                 return resp
             except (requests.ConnectionError, requests.Timeout, requests.HTTPError) as e:
-                # Do not retry 4xx client errors
+                # Do not retry 4xx client errors (except token expiration handled above)
                 if (
                     isinstance(e, requests.HTTPError)
                     and e.response is not None

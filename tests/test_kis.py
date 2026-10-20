@@ -256,3 +256,103 @@ def test_kis_request_no_retry_on_4xx(kis_client):
             kis_client._request("GET", "https://mock.url", max_retries=3)
         assert mock_get.call_count == 1
         mock_sleep.assert_not_called()
+
+
+def test_kis_get_access_token_force_refresh(kis_client):
+    """force_refresh=True 시 기존 캐시를 파기하고 새 토큰을 즉시 재발급하는지 검증."""
+    kis_client._access_token = "old_token"
+    kis_client._token_expires_at = 9999999999.0
+
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.json.return_value = {
+        "access_token": "new_refreshed_token",
+        "token_type": "Bearer",
+        "expires_in": 86400,
+    }
+
+    with patch.object(kis_client.session, "post", return_value=mock_resp) as mock_post:
+        token = kis_client.get_access_token(force_refresh=True)
+        assert token == "new_refreshed_token"
+        assert kis_client._access_token == "new_refreshed_token"
+        mock_post.assert_called_once()
+
+
+def test_kis_request_auto_recovers_on_401(kis_client):
+    """API 호출 중 401 토큰 만료 발생 시 토큰을 재발급받고 1회 재시도하여 성공하는지 검증."""
+    kis_client._access_token = "expired_token"
+    kis_client._token_expires_at = 9999999999.0
+
+    # 1st call: 401 Unauthorized
+    resp_401 = MagicMock()
+    resp_401.status_code = 401
+    resp_401.text = '{"msg_cd": "EGW00123", "msg1": "기간이 만료된 token 입니다."}'
+    resp_401.json.return_value = {"msg_cd": "EGW00123", "msg1": "기간이 만료된 token 입니다."}
+
+    # Token refresh response
+    resp_token = MagicMock()
+    resp_token.status_code = 200
+    resp_token.json.return_value = {
+        "access_token": "new_valid_token",
+        "expires_in": 86400,
+    }
+
+    # 2nd call: 200 OK
+    resp_200 = MagicMock()
+    resp_200.status_code = 200
+    resp_200.json.return_value = {
+        "rt_cd": "0",
+        "msg_cd": "MCA00000",
+        "output": {"stck_prpr": "70000"},
+    }
+
+    # session.get: 1st returns resp_401, 2nd returns resp_200
+    # session.post: used by token refresh
+    with (
+        patch.object(kis_client.session, "get", side_effect=[resp_401, resp_200]) as mock_get,
+        patch.object(kis_client.session, "post", return_value=resp_token) as mock_token_post,
+    ):
+        price = kis_client.fetch_current_price("005930")
+        assert price == 70000.0
+        assert mock_get.call_count == 2
+        mock_token_post.assert_called_once()
+        assert kis_client._access_token == "new_valid_token"
+
+
+def test_kis_request_auto_recovers_on_egw00123_error_code(kis_client):
+    """200 OK 또는 400 등 본문 JSON에 EGW00123 토큰 만료 에러 코드가 왔을 때 자동 갱신 및 재시도 검증."""
+    kis_client._access_token = "stale_token"
+    kis_client._token_expires_at = 9999999999.0
+
+    resp_stale = MagicMock()
+    resp_stale.status_code = 200
+    resp_stale.json.return_value = {
+        "rt_cd": "1",
+        "msg_cd": "EGW00123",
+        "msg1": "기간이 만료된 token 입니다.",
+    }
+
+    resp_token = MagicMock()
+    resp_token.status_code = 200
+    resp_token.json.return_value = {
+        "access_token": "fresh_token",
+        "expires_in": 86400,
+    }
+
+    resp_success = MagicMock()
+    resp_success.status_code = 200
+    resp_success.json.return_value = {
+        "rt_cd": "0",
+        "msg_cd": "MCA00000",
+        "output": {"stck_prpr": "50000"},
+    }
+
+    with (
+        patch.object(kis_client.session, "get", side_effect=[resp_stale, resp_success]) as mock_get,
+        patch.object(kis_client.session, "post", return_value=resp_token) as mock_token_post,
+    ):
+        price = kis_client.fetch_current_price("000660")
+        assert price == 50000.0
+        assert mock_get.call_count == 2
+        mock_token_post.assert_called_once()
+
