@@ -133,6 +133,22 @@ def main() -> None:
         batches = [missing_hist_corps[i : i + 100] for i in range(0, len(missing_hist_corps), 100)]
         periods = [(2015, 4)] + [(yr, q) for yr in range(2016, 2024) for q in (1, 2, 3, 4)]
         tasks = [(b, yr, q) for yr, q in periods for b in batches]
+
+        # Probe 1 call first: if OpenDART WAF blocks or resets connection, exit immediately in 1s!
+        probe_url = f"{dart.base_url}/fnlttMultiAcnt.json"
+        probe_params = {
+            "crtfc_key": dart.api_key,
+            "corp_code": ",".join(batches[0][:50]),
+            "bsns_year": "2023",
+            "reprt_code": "11011",
+        }
+        try:
+            probe_resp = dart.session.get(probe_url, params=probe_params, timeout=5).json()
+            logger.info("OpenDART probe succeeded (status=%s)!", probe_resp.get("status"))
+        except Exception as exc:
+            logger.warning("OpenDART WAF rate-limit active (%s). Skipping 2015-2023 sync immediately.", exc)
+            return
+
         logger.info("Fetching %d OpenDART bulk tasks (2015-2023) sequentially with 0.12s WAF-safe pacing...", len(tasks))
 
         t0 = time.time()
