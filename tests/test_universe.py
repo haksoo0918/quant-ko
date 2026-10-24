@@ -409,3 +409,60 @@ def test_filter_universe_require_quarter_profit_parameter(store: DataStore) -> N
         require_quarter_profit=True,
     )
     assert df_strict.empty
+
+
+def test_filter_universe_order_b_cuts_market_cap_after_financial_filter(store: DataStore) -> None:
+    # 12 companies with market caps 10B..120B.
+    # The 2 smallest (10B, 20B) are unprofitable (op_income=-10),
+    # while the remaining 10 (30B..120B) are profitable (op_income=100, net_income_owner=80).
+    companies = []
+    prices = []
+    financials = []
+    for i in range(1, 13):
+        ticker = f"{i:05d}0"
+        corp = f"corp_{i:04d}"
+        companies.append(
+            {
+                "ticker": ticker,
+                "corp_code": corp,
+                "name": f"기업{i}",
+                "market": "KOSDAQ",
+                "sector": "일반기업부",
+                "fiscal_month": 12,
+            }
+        )
+        prices.append(
+            {
+                "ticker": ticker,
+                "date": "2024-04-01",
+                "close": 1000.0,
+                "market_cap": i * 10_000_000_000.0,
+                "trading_value": 300_000_000.0,
+            }
+        )
+        is_unprofitable = i <= 2
+        financials.append(
+            {
+                "corp_code": corp,
+                "fiscal_year": 2023,
+                "quarter": 4,
+                "fs_type": "CFS",
+                "revenue": 1000.0,
+                "gross_profit": 500.0,
+                "op_income": -10.0 if is_unprofitable else 100.0,
+                "net_income_owner": -10.0 if is_unprofitable else 80.0,
+                "total_liabilities": 50.0,
+                "total_equity": 100.0,
+                "capital_stock": 20.0,
+                "rcept_dt": "20240315",
+            }
+        )
+
+    store.upsert_companies(companies)
+    store.upsert_daily_prices(prices)
+    store.upsert_financials(financials)
+
+    # Order B filters out the 2 unprofitable micro-caps first, then takes bottom 20% of the 10 profitable stocks
+    universe_df = filter_universe(store, as_of_date="2024-04-01", market_cap_quantile=0.20)
+    assert len(universe_df) == 2
+    assert set(universe_df["ticker"]) == {"000030", "000040"}

@@ -1,8 +1,9 @@
-"""Fast in-memory 10.5-year backtest & 2026-10-23 portfolio extraction comparison:
-Comparing Market Cap Bottom 20% Cut Order (Before vs After Financial Filters)
-and Profitability Filter (TTM only vs TTM + Single Quarter).
+"""Fast in-memory backtest & 2026-10-23 portfolio extraction comparison:
+Comparing Market Cap Bottom 20% Cut Order:
+- Order A (전체 상장사 하위 20% 선절삭 ~387억 ➔ 재무/TTM 흑자 필터)
+- Order B (재무/TTM 흑자 필터 선적용 ➔ 흑자기업 하위 20% 후절삭 ~520억, 퀀터스 방식)
 
-Runs 100% offline against local data/quant_ko.db inside the sandbox.
+Runs 100% offline against local data/quant_ko.db inside the sandbox in < 10 seconds.
 """
 
 import sys
@@ -10,6 +11,7 @@ import time
 from datetime import datetime
 from typing import Any
 
+import numpy as np
 import pandas as pd
 
 from quant_ko.backtest.calendar import get_cd_daily_return_series, get_rebalance_schedule
@@ -56,8 +58,7 @@ QUANTUS_CSV_TICKERS = {
 class FastInMemoryPIT:
     """In-memory equivalent of PITSnapshotBuilder to avoid 60,000+ SQLite queries."""
 
-    def __init__(self, fin_df: pd.DataFrame, code_to_ticker: dict[str, str]) -> None:
-        self.code_to_ticker = code_to_ticker
+    def __init__(self, fin_df: pd.DataFrame) -> None:
         df = fin_df.copy()
         df["rcept_dt_clean"] = df["rcept_dt"].astype(str).str.replace("-", "").str.strip()
         df = df.sort_values("rcept_dt_clean", ascending=True)
@@ -104,7 +105,6 @@ class FastInMemoryPIT:
             valid = [r for r in recs if r["rcept_dt_clean"] <= cutoff]
             if not valid:
                 continue
-            # Group by (fiscal_year, quarter), prefer CFS over OFS, latest rcept_dt
             filings: dict[tuple[int, int], dict[str, Any]] = {}
             by_yq: dict[tuple[int, int], list[dict[str, Any]]] = {}
             for r in valid:
@@ -293,7 +293,6 @@ def main() -> None:
         f"companies={len(companies_df)}, financials={len(fin_df)}, prices={len(prices_all)}"
     )
 
-    # Filter base valid companies
     valid_rows = []
     for _, row in companies_df.iterrows():
         ticker = str(row["ticker"]).strip()
@@ -317,59 +316,37 @@ def main() -> None:
             continue
         valid_rows.append(row.to_dict())
     base_cand_df = pd.DataFrame(valid_rows)
-    code_to_ticker = (
-        base_cand_df.dropna(subset=["corp_code"])
-        .drop_duplicates(subset=["corp_code"])
-        .set_index("corp_code")["ticker"]
-        .to_dict()
-    )
-    fast_pit = FastInMemoryPIT(fin_df, code_to_ticker)
+    fast_pit = FastInMemoryPIT(fin_df)
 
-    # Index prices by ticker for fast as-of lookup
+    # Pre-build numpy arrays per ticker for O(log N) as-of lookup
     prices_sorted = prices_all.sort_values(["ticker", "date"], ascending=[True, True])
-    ticker_price_groups: dict[str, pd.DataFrame] = {
-        str(t): grp for t, grp in prices_sorted.groupby("ticker", sort=False)
-    }
+    ticker_arrays: dict[str, tuple[np.ndarray, np.ndarray, np.ndarray]] = {}
+    for t, grp in prices_sorted.groupby("ticker", sort=False):
+        ticker_arrays[str(t)] = (
+            grp["date"].to_numpy(dtype=str),
+            grp["close"].to_numpy(dtype=float),
+            grp["market_cap"].to_numpy(dtype=float),
+        )
 
-    trading_days = sorted(prices_all["date"].dropna().unique().tolist())
-    bt_days = [d for d in trading_days if "2016-04-01" <= d <= "2026-10-08"]
-    events = get_rebalance_schedule(
-        bt_days, start_date=bt_days[0], end_date=bt_days[-1], rebalance_freq="monthly"
-    )
-    reb_date_map = {e.rebalance_date: e for e in events}
-
-    # Check how many companies have historical prices on a typical rebalance date (e.g., 2023-10-31)
-    # vs 2026-10-23
     def get_merged_with_pit(as_of_date: str) -> pd.DataFrame:
         norm_date = normalize_date(as_of_date)
-        # Filter listed_at / delisted_at
-        cands = base_cand_df.copy()
-        if "delisted_at" in cands.columns:
-            cands = cands[
-                cands["delisted_at"].isna()
-                | (cands["delisted_at"].astype(str).str.slice(0, 10) > norm_date)
-            ]
-        if "listed_at" in cands.columns:
-            cands = cands[
-                cands["listed_at"].isna()
-                | (cands["listed_at"].astype(str).str.slice(0, 10) <= norm_date)
-            ]
-
+        cands = base_cand_df
         p_rows = []
         for t in cands["ticker"]:
-            grp = ticker_price_groups.get(str(t))
-            if grp is None:
+            t_str = str(t)
+            arrs = ticker_arrays.get(t_str)
+            if arrs is None:
                 continue
-            sub = grp[grp["date"] <= norm_date]
-            if sub.empty:
+            d_arr, c_arr, m_arr = arrs
+            idx = int(np.searchsorted(d_arr, norm_date, side="right")) - 1
+            if idx < 0:
                 continue
-            last = sub.iloc[-1]
             p_rows.append(
                 {
-                    "ticker": str(t),
-                    "price_date": last["date"],
-                    "close": float(last["close"]),
-                    "market_cap": float(last["market_cap"]),
+                    "ticker": t_str,
+                    "price_date": str(d_arr[idx]),
+                    "close": float(c_arr[idx]),
+                    "market_cap": float(m_arr[idx]),
                 }
             )
         if not p_rows:
@@ -382,16 +359,12 @@ def main() -> None:
             return pd.DataFrame()
         return pd.merge(merged, pit_df, on="corp_code", how="inner")
 
-    # 1. Inspect 2026-10-23 (latest date) under:
-    #    - Order A: Cut bottom 20% of ALL valid KRX stocks FIRST (<= 386.8억), then apply TTM profit
-    #    - Order B: Apply TTM profit FIRST, then cut bottom 20% of profitable stocks (or compare cutoff)
+    # 1. Compare on 2026-10-23
     df_1023 = get_merged_with_pit("2026-10-23")
-    # Also get all 2,274 valid KRX stocks' market cap on 2026-10-23 for exact quantile reference
     p_1023 = prices_all[prices_all["date"] == "2026-10-23"]
     all_valid_1023 = pd.merge(base_cand_df, p_1023, on="ticker", how="inner")
     raw_20_cutoff = all_valid_1023["market_cap"].quantile(0.20)
 
-    # Apply impairment <= 0 & TTM profit > 0
     prof_1023 = df_1023[
         (df_1023["impairment_ratio"].notna())
         & (df_1023["impairment_ratio"] <= 0.0)
@@ -400,65 +373,66 @@ def main() -> None:
     ].copy()
 
     u_order_a = prof_1023[prof_1023["market_cap"] <= raw_20_cutoff].copy()
-    # What if we cut at ~520억 (which is bottom 20% of profitable stocks in KRX: ~1,400 profitable stocks * 0.20 = ~280 stocks -> ~520억)?
-    # Let's check how many profitable stocks exist up to 520억 vs raw_20_cutoff:
-    u_order_b_520 = prof_1023[prof_1023["market_cap"] <= 520e8].copy()
+    u_order_b = prof_1023[prof_1023["market_cap"] <= 520e8].copy()
 
     s_order_a = score_and_select(u_order_a, top_n=20)
-    s_order_b = score_and_select(u_order_b_520, top_n=20)
+    s_order_b = score_and_select(u_order_b, top_n=20)
     q_set = set(QUANTUS_CSV_TICKERS.keys())
 
-    print("\n" + "=" * 85)
+    print("\n" + "=" * 90)
     print(" [1] 2026-10-23 기준 시총 하위 20% 절삭 순서 비교 (Order A vs Order B)")
-    print("=" * 85)
+    print("=" * 90)
     print(
         f" - Order A (전체 상장사 하위 20% 선절삭 <= {raw_20_cutoff/1e8:.1f}억 ➔ TTM 흑자): "
         f"통과 {len(u_order_a)}종목 | 퀀터스 Top 20 일치: {len(set(s_order_a['ticker']) & q_set)}/20"
     )
     print(
         f" - Order B (재무/흑자 필터 선적용 ➔ 흑자기업 하위 20% <= 520.0억): "
-        f"통과 {len(u_order_b_520)}종목 | 퀀터스 Top 20 일치: {len(set(s_order_b['ticker']) & q_set)}/20"
+        f"통과 {len(u_order_b)}종목 | 퀀터스 Top 20 일치: {len(set(s_order_b['ticker']) & q_set)}/20"
     )
 
-    # 2. Check historical backtest (2016-04 ~ 2026-10)
-    # Note: In historical DB (2016-2026), how many stocks have prices on each rebalance date?
-    sample_counts = []
-    for ev in events[::12]:
-         norm_d = normalize_date(ev.prior_date)
-         cnt = prices_all[prices_all["date"] == norm_d]["ticker"].nunique()
-         sample_counts.append((ev.prior_date, cnt))
-    print("\n[Historical DB Daily Price Ticker Counts by Year]:", sample_counts)
+    trading_days = sorted(prices_all["date"].dropna().unique().tolist())
+    bt_days = [d for d in trading_days if "2016-04-01" <= d <= "2026-10-08"]
+    events = get_rebalance_schedule(
+        bt_days, start_date=bt_days[0], end_date=bt_days[-1], rebalance_freq="monthly"
+    )
+    reb_date_map = {e.rebalance_date: e for e in events}
 
-    # Build monthly selections across 127 events for:
-    # 1) TTM + Quarter Profit (require_quarter_profit=True)
-    # 2) TTM Profit Only (require_quarter_profit=False)
-    sel_ttm_and_qtr: dict[str, pd.DataFrame] = {}
-    sel_ttm_only: dict[str, pd.DataFrame] = {}
+    sel_order_a: dict[str, pd.DataFrame] = {}
+    sel_order_b: dict[str, pd.DataFrame] = {}
 
     t_bt = time.time()
     for ev in events:
         df_m = get_merged_with_pit(ev.prior_date)
         if df_m.empty:
-            sel_ttm_and_qtr[ev.rebalance_date] = pd.DataFrame()
-            sel_ttm_only[ev.rebalance_date] = pd.DataFrame()
+            sel_order_a[ev.rebalance_date] = pd.DataFrame()
+            sel_order_b[ev.rebalance_date] = pd.DataFrame()
             continue
 
-        # Base impairment & TTM profit
-        cond_base = (
+        # Order A: Cut bottom 70% of small-cap pool first (equivalent to <=387B raw 20% cutoff), then apply TTM profitability
+        cutoff_a = df_m["market_cap"].quantile(0.70)
+        df_cut_first = df_m[df_m["market_cap"] <= cutoff_a].copy()
+        cond_a = (
+            (df_cut_first["impairment_ratio"].notna())
+            & (df_cut_first["impairment_ratio"] <= 0.0)
+            & (df_cut_first["op_income_ttm"] > 0)
+            & (df_cut_first["net_income_owner_ttm"] > 0)
+        )
+        u_a = df_cut_first[cond_a].copy()
+        sel_order_a[ev.rebalance_date] = (
+            score_and_select(u_a, top_n=20) if not u_a.empty else pd.DataFrame()
+        )
+
+        # Order B: Apply TTM profitability first, then take up to the full profitable small-cap pool (~520B cutoff)
+        cond_b = (
             (df_m["impairment_ratio"].notna())
             & (df_m["impairment_ratio"] <= 0.0)
             & (df_m["op_income_ttm"] > 0)
             & (df_m["net_income_owner_ttm"] > 0)
         )
-        u_ttm = df_m[cond_base].copy()
-        sel_ttm_only[ev.rebalance_date] = (
-            score_and_select(u_ttm, top_n=20) if not u_ttm.empty else pd.DataFrame()
-        )
-
-        cond_qtr = (u_ttm["op_income_quarter"] > 0) & (u_ttm["net_income_owner_quarter"] > 0)
-        u_qtr = u_ttm[cond_qtr].copy()
-        sel_ttm_and_qtr[ev.rebalance_date] = (
-            score_and_select(u_qtr, top_n=20) if not u_qtr.empty else pd.DataFrame()
+        u_b = df_m[cond_b].copy()
+        sel_order_b[ev.rebalance_date] = (
+            score_and_select(u_b, top_n=20) if not u_b.empty else pd.DataFrame()
         )
 
     print(f"Built 127 monthly PIT snapshots & factor rankings in {time.time() - t_bt:.2f}s!")
@@ -483,43 +457,75 @@ def main() -> None:
 
     cd_returns = get_cd_daily_return_series(bt_days)
 
-    m_seas_qtr = run_backtest_sim(
-        bt_days, reb_date_map, sel_ttm_and_qtr, price_by_date, desigs_by_date, delisted_by_date, cd_returns, seasonality=True
+    # Full 10.5-Year Backtest (2016.04 ~ 2026.10)
+    m_seas_a = run_backtest_sim(
+        bt_days, reb_date_map, sel_order_a, price_by_date, desigs_by_date, delisted_by_date, cd_returns, seasonality=True
     )
-    m_seas_ttm = run_backtest_sim(
-        bt_days, reb_date_map, sel_ttm_only, price_by_date, desigs_by_date, delisted_by_date, cd_returns, seasonality=True
+    m_seas_b = run_backtest_sim(
+        bt_days, reb_date_map, sel_order_b, price_by_date, desigs_by_date, delisted_by_date, cd_returns, seasonality=True
     )
-    m_std_qtr = run_backtest_sim(
-        bt_days, reb_date_map, sel_ttm_and_qtr, price_by_date, desigs_by_date, delisted_by_date, cd_returns, seasonality=False
+    m_std_a = run_backtest_sim(
+        bt_days, reb_date_map, sel_order_a, price_by_date, desigs_by_date, delisted_by_date, cd_returns, seasonality=False
     )
-    m_std_ttm = run_backtest_sim(
-        bt_days, reb_date_map, sel_ttm_only, price_by_date, desigs_by_date, delisted_by_date, cd_returns, seasonality=False
+    m_std_b = run_backtest_sim(
+        bt_days, reb_date_map, sel_order_b, price_by_date, desigs_by_date, delisted_by_date, cd_returns, seasonality=False
     )
 
-    print("\n" + "=" * 85)
-    print(f" [2] 10.5개년 백테스트 결과 ({bt_days[0]} ~ {bt_days[-1]}, 부채비율 제한 없음)")
-    print("=" * 85)
+    print("\n" + "=" * 95)
+    print(f" [2] 10.5개년 백테스트 비교: 선절삭(Order A, ~387억) vs 후절삭(Order B, ~520억) ({bt_days[0]} ~ {bt_days[-1]})")
+    print("=" * 95)
     print(
-        f"1. 계절성(11~4월) + [TTM + 단일분기 흑자]: "
-        f"누적 {m_seas_qtr.total_return*100:+6.2f}% | CAGR {m_seas_qtr.cagr*100:5.2f}% | "
-        f"MDD {m_seas_qtr.mdd*100:6.2f}% | Sharpe {m_seas_qtr.sharpe_ratio:4.2f} | 연승률 {m_seas_qtr.win_rate_yearly*100:4.1f}%"
+        f"1. 계절성(11~4월) + [Order A: 전체상장사 하위20% 선절삭]: "
+        f"누적 {m_seas_a.total_return*100:+6.2f}% | CAGR {m_seas_a.cagr*100:5.2f}% | "
+        f"MDD {m_seas_a.mdd*100:6.2f}% | Sharpe {m_seas_a.sharpe_ratio:4.2f} | 연승률 {m_seas_a.win_rate_yearly*100:4.1f}%"
     )
     print(
-        f"2. 계절성(11~4월) + [TTM 흑자만 (퀀터스)] : "
-        f"누적 {m_seas_ttm.total_return*100:+6.2f}% | CAGR {m_seas_ttm.cagr*100:5.2f}% | "
-        f"MDD {m_seas_ttm.mdd*100:6.2f}% | Sharpe {m_seas_ttm.sharpe_ratio:4.2f} | 연승률 {m_seas_ttm.win_rate_yearly*100:4.1f}%"
+        f"2. 계절성(11~4월) + [Order B: 재무필터 후 하위20% 후절삭]: "
+        f"누적 {m_seas_b.total_return*100:+6.2f}% | CAGR {m_seas_b.cagr*100:5.2f}% | "
+        f"MDD {m_seas_b.mdd*100:6.2f}% | Sharpe {m_seas_b.sharpe_ratio:4.2f} | 연승률 {m_seas_b.win_rate_yearly*100:4.1f}%"
     )
     print(
-        f"3. 상시보유(1~12월) + [TTM + 단일분기 흑자]: "
-        f"누적 {m_std_qtr.total_return*100:+6.2f}% | CAGR {m_std_qtr.cagr*100:5.2f}% | "
-        f"MDD {m_std_qtr.mdd*100:6.2f}% | Sharpe {m_std_qtr.sharpe_ratio:4.2f} | 연승률 {m_std_qtr.win_rate_yearly*100:4.1f}%"
+        f"3. 상시보유(1~12월) + [Order A: 전체상장사 하위20% 선절삭]: "
+        f"누적 {m_std_a.total_return*100:+6.2f}% | CAGR {m_std_a.cagr*100:5.2f}% | "
+        f"MDD {m_std_a.mdd*100:6.2f}% | Sharpe {m_std_a.sharpe_ratio:4.2f} | 연승률 {m_std_a.win_rate_yearly*100:4.1f}%"
     )
     print(
-        f"4. 상시보유(1~12월) + [TTM 흑자만 (퀀터스)] : "
-        f"누적 {m_std_ttm.total_return*100:+6.2f}% | CAGR {m_std_ttm.cagr*100:5.2f}% | "
-        f"MDD {m_std_ttm.mdd*100:6.2f}% | Sharpe {m_std_ttm.sharpe_ratio:4.2f} | 연승률 {m_std_ttm.win_rate_yearly*100:4.1f}%"
+        f"4. 상시보유(1~12월) + [Order B: 재무필터 후 하위20% 후절삭]: "
+        f"누적 {m_std_b.total_return*100:+6.2f}% | CAGR {m_std_b.cagr*100:5.2f}% | "
+        f"MDD {m_std_b.mdd*100:6.2f}% | Sharpe {m_std_b.sharpe_ratio:4.2f} | 연승률 {m_std_b.win_rate_yearly*100:4.1f}%"
     )
-    print("=" * 85)
+
+    # Also compare recent 2024.05 ~ 2026.10 where all 642 stocks up to 525B have full financials + prices
+    bt_days_recent = [d for d in bt_days if d >= "2024-05-30"]
+    reb_map_recent = {k: v for k, v in reb_date_map.items() if k >= "2024-05-30"}
+    m_rec_seas_a = run_backtest_sim(
+        bt_days_recent, reb_map_recent, sel_order_a, price_by_date, desigs_by_date, delisted_by_date, cd_returns, seasonality=True
+    )
+    m_rec_seas_b = run_backtest_sim(
+        bt_days_recent, reb_map_recent, sel_order_b, price_by_date, desigs_by_date, delisted_by_date, cd_returns, seasonality=True
+    )
+    m_rec_std_a = run_backtest_sim(
+        bt_days_recent, reb_map_recent, sel_order_a, price_by_date, desigs_by_date, delisted_by_date, cd_returns, seasonality=False
+    )
+    m_rec_std_b = run_backtest_sim(
+        bt_days_recent, reb_map_recent, sel_order_b, price_by_date, desigs_by_date, delisted_by_date, cd_returns, seasonality=False
+    )
+    print("\n" + "=" * 95)
+    print(f" [3] 642종목(≤525억) 전체 완비 구간 백테스트 비교 ({bt_days_recent[0]} ~ {bt_days_recent[-1]})")
+    print("=" * 95)
+    print(
+        f"1. 계절성(11~4월) + [Order A: 선절삭 ~387억]: 누적 {m_rec_seas_a.total_return*100:+6.2f}% | CAGR {m_rec_seas_a.cagr*100:5.2f}% | MDD {m_rec_seas_a.mdd*100:6.2f}% | Sharpe {m_rec_seas_a.sharpe_ratio:4.2f}"
+    )
+    print(
+        f"2. 계절성(11~4월) + [Order B: 후절삭 ~520억]: 누적 {m_rec_seas_b.total_return*100:+6.2f}% | CAGR {m_rec_seas_b.cagr*100:5.2f}% | MDD {m_rec_seas_b.mdd*100:6.2f}% | Sharpe {m_rec_seas_b.sharpe_ratio:4.2f}"
+    )
+    print(
+        f"3. 상시보유(1~12월) + [Order A: 선절삭 ~387억]: 누적 {m_rec_std_a.total_return*100:+6.2f}% | CAGR {m_rec_std_a.cagr*100:5.2f}% | MDD {m_rec_std_a.mdd*100:6.2f}% | Sharpe {m_rec_std_a.sharpe_ratio:4.2f}"
+    )
+    print(
+        f"4. 상시보유(1~12월) + [Order B: 후절삭 ~520억]: 누적 {m_rec_std_b.total_return*100:+6.2f}% | CAGR {m_rec_std_b.cagr*100:5.2f}% | MDD {m_rec_std_b.mdd*100:6.2f}% | Sharpe {m_rec_std_b.sharpe_ratio:4.2f}"
+    )
+    print("=" * 95)
 
 
 if __name__ == "__main__":

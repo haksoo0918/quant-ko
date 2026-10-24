@@ -141,26 +141,7 @@ def filter_universe(
     if merged.empty:
         return pd.DataFrame()
 
-    # 3. Market Cap cut: Bottom 20% (smallest market caps)
-    # Bottom 20% means lowest market cap
-    # We rank market_cap ascending (lowest rank is smallest)
-    if market_cap_quantile < 1.0:
-        if len(merged) < len(universe_candidates) * 0.8:
-            target_count = max(1, int(round(len(universe_candidates) * market_cap_quantile)))
-            merged = merged.sort_values("market_cap", ascending=True).head(target_count).copy()
-        else:
-            cap_cutoff = merged["market_cap"].quantile(market_cap_quantile)
-            merged = merged[merged["market_cap"] <= cap_cutoff].copy()
-
-    if merged.empty:
-        return pd.DataFrame()
-
-    # 4. Liquidity Filter: 20-day average trading value >= min_trading_value
-    merged = merged[merged["trading_value_20d_avg"] >= min_trading_value].copy()
-    if merged.empty:
-        return pd.DataFrame()
-
-    # 5. Financial metrics from PIT snapshot
+    # 3. Financial metrics from PIT snapshot
     if pit_df is None:
         builder = PITSnapshotBuilder(store)
         corp_codes = merged["corp_code"].dropna().unique().tolist()
@@ -183,8 +164,10 @@ def filter_universe(
     if final_df.empty:
         return pd.DataFrame()
 
-    # 6. Financial Health Filter
-    # debt_ratio <= max_debt_ratio (default 200%), impairment_ratio <= 0%
+    n_with_fin = len(final_df)
+
+    # 4. Financial Health Filter
+    # debt_ratio <= max_debt_ratio (optional), impairment_ratio <= 0%
     cond_impairment = (final_df["impairment_ratio"].notna()) & (final_df["impairment_ratio"] <= 0.0)
     if max_debt_ratio is not None:
         cond_debt = (final_df["debt_ratio"].notna()) & (final_df["debt_ratio"] <= max_debt_ratio)
@@ -194,7 +177,7 @@ def filter_universe(
     if final_df.empty:
         return pd.DataFrame()
 
-    # 7. Profitability Filter
+    # 5. Profitability Filter
     cond_ttm_op = final_df["op_income_ttm"] > 0
     cond_ttm_net = final_df["net_income_owner_ttm"] > 0
     if require_quarter_profit:
@@ -203,5 +186,23 @@ def filter_universe(
         final_df = final_df[cond_qtr_op & cond_qtr_net & cond_ttm_op & cond_ttm_net].copy()
     else:
         final_df = final_df[cond_ttm_op & cond_ttm_net].copy()
+
+    if final_df.empty:
+        return pd.DataFrame()
+
+    # 6. Market Cap cut: Bottom quantile (default 20%) of financially valid/profitable stocks (Order B)
+    if market_cap_quantile < 1.0:
+        if n_with_fin < len(universe_candidates) * 0.8:
+            target_count = max(1, int(round(len(universe_candidates) * market_cap_quantile)))
+            final_df = final_df.sort_values("market_cap", ascending=True).head(target_count).copy()
+        else:
+            cap_cutoff = final_df["market_cap"].quantile(market_cap_quantile)
+            final_df = final_df[final_df["market_cap"] <= cap_cutoff].copy()
+
+    if final_df.empty:
+        return pd.DataFrame()
+
+    # 7. Liquidity Filter: 20-day average trading value >= min_trading_value
+    final_df = final_df[final_df["trading_value_20d_avg"] >= min_trading_value].copy()
 
     return final_df.reset_index(drop=True)
