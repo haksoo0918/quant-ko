@@ -31,6 +31,8 @@ def filter_universe(
     pit_df: pd.DataFrame | None = None,
     min_trading_value: float = 0.0,
     market_cap_quantile: float = 0.20,
+    max_debt_ratio: float | None = None,
+    require_quarter_profit: bool = False,
 ) -> pd.DataFrame:
     """Filter stocks according to PRD section 3.1 rules.
 
@@ -76,6 +78,15 @@ def filter_universe(
 
         # Holding or financial
         if is_holding_or_financial(sector, name):
+            continue
+
+        # KONEX
+        market_val = str(row.get("market") or "").strip().upper()
+        if market_val == "KONEX":
+            continue
+
+        # Sector designations / foreign
+        if any(kw in sector for kw in ("관리종목", "환기종목", "외국기업")):
             continue
 
         # Fiscal month == 12
@@ -134,8 +145,12 @@ def filter_universe(
     # Bottom 20% means lowest market cap
     # We rank market_cap ascending (lowest rank is smallest)
     if market_cap_quantile < 1.0:
-        cap_cutoff = merged["market_cap"].quantile(market_cap_quantile)
-        merged = merged[merged["market_cap"] <= cap_cutoff].copy()
+        if len(merged) < len(universe_candidates) * 0.8:
+            target_count = max(1, int(round(len(universe_candidates) * market_cap_quantile)))
+            merged = merged.sort_values("market_cap", ascending=True).head(target_count).copy()
+        else:
+            cap_cutoff = merged["market_cap"].quantile(market_cap_quantile)
+            merged = merged[merged["market_cap"] <= cap_cutoff].copy()
 
     if merged.empty:
         return pd.DataFrame()
@@ -169,21 +184,24 @@ def filter_universe(
         return pd.DataFrame()
 
     # 6. Financial Health Filter
-    # debt_ratio <= 200%, impairment_ratio <= 0%
-    cond_debt = (final_df["debt_ratio"].notna()) & (final_df["debt_ratio"] <= 200.0)
+    # debt_ratio <= max_debt_ratio (default 200%), impairment_ratio <= 0%
     cond_impairment = (final_df["impairment_ratio"].notna()) & (final_df["impairment_ratio"] <= 0.0)
-    final_df = final_df[cond_debt & cond_impairment].copy()
+    if max_debt_ratio is not None:
+        cond_debt = (final_df["debt_ratio"].notna()) & (final_df["debt_ratio"] <= max_debt_ratio)
+        final_df = final_df[cond_debt & cond_impairment].copy()
+    else:
+        final_df = final_df[cond_impairment].copy()
     if final_df.empty:
         return pd.DataFrame()
 
     # 7. Profitability Filter
-    # Latest quarter op_income > 0 and net_income_owner > 0
-    # AND TTM op_income > 0 and net_income_owner > 0
-    cond_qtr_op = final_df["op_income_quarter"] > 0
-    cond_qtr_net = final_df["net_income_owner_quarter"] > 0
     cond_ttm_op = final_df["op_income_ttm"] > 0
     cond_ttm_net = final_df["net_income_owner_ttm"] > 0
-
-    final_df = final_df[cond_qtr_op & cond_qtr_net & cond_ttm_op & cond_ttm_net].copy()
+    if require_quarter_profit:
+        cond_qtr_op = final_df["op_income_quarter"] > 0
+        cond_qtr_net = final_df["net_income_owner_quarter"] > 0
+        final_df = final_df[cond_qtr_op & cond_qtr_net & cond_ttm_op & cond_ttm_net].copy()
+    else:
+        final_df = final_df[cond_ttm_op & cond_ttm_net].copy()
 
     return final_df.reset_index(drop=True)

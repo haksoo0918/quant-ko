@@ -341,8 +341,13 @@ class DataCollector:
             if is_holding_or_financial(sector, name):
                 continue
 
-            market = str(row.get("market") or "").upper()
-            if market not in ("KOSPI", "KOSDAQ", "STK", "KSQ"):
+            if any(kw in sector for kw in ("관리종목", "환기종목", "외국기업")):
+                continue
+
+            market_val = str(row.get("market") or "").strip().upper()
+            if market_val == "KONEX":
+                continue
+            if market_val not in ("KOSPI", "KOSDAQ", "STK", "KSQ"):
                 continue
 
             fiscal_month = row.get("fiscal_month")

@@ -280,7 +280,14 @@ def test_filter_universe_financial_health_and_profitability(store):
     store.upsert_financials(financials)
 
     # Use market_cap_quantile=1.0 to test health/profitability isolation
-    res = filter_universe(store, as_of_date="2024-04-01", market_cap_quantile=1.0)
+    # Default max_debt_ratio=None allows high debt (000120) as long as impairment <= 0%
+    res_default = filter_universe(store, as_of_date="2024-04-01", market_cap_quantile=1.0)
+    assert set(res_default["ticker"]) == {"000110", "000120"}
+
+    # Explicit max_debt_ratio=200.0 filters out 000120 (300% debt ratio)
+    res = filter_universe(
+        store, as_of_date="2024-04-01", market_cap_quantile=1.0, max_debt_ratio=200.0
+    )
     assert len(res) == 1
     assert res.iloc[0]["ticker"] == "000110"
 
