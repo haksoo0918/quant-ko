@@ -60,6 +60,7 @@ data/*.pkl
 data/*.json
 data/*.csv
 data/*.parquet
+!data/backtest_10y_series.parquet
 data/raw/
 data/cache/
 

@@ -12,6 +12,7 @@
 
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 from typing import Any
@@ -38,6 +39,14 @@ from quant_ko.dashboard.data_loader import (  # noqa: E402
 
 try:
     import streamlit as st
+    # Streamlit Cloud 배포 환경: st.secrets에 등록된 KIS API 키 및 설정을 os.environ에 자동 동기화
+    if hasattr(st, "secrets"):
+        try:
+            for _k, _v in st.secrets.items():
+                if _k not in os.environ:
+                    os.environ[_k] = str(_v)
+        except Exception:
+            pass
 except ImportError:  # pragma: no cover - 오프라인/비설치 환경에서도 모듈 임포트 보장
     st = None  # type: ignore[assignment]
 
