@@ -123,6 +123,18 @@ DASHBOARD_CSS = """
     [data-testid="stMetricDelta"] {
         font-size: clamp(0.75rem, 1.1vw, 0.85rem) !important;
     }
+    div[data-testid="stCheckbox"] {
+        display: flex;
+        justify-content: flex-end;
+    }
+    div[data-testid="stCheckbox"] .stMarkdownEllipsis {
+        text-overflow: unset !important;
+        white-space: nowrap !important;
+        overflow: visible !important;
+    }
+    div[data-testid="stCheckbox"] [data-testid="stWidgetLabel"] {
+        white-space: nowrap !important;
+    }
     .rule-card {
         background-color: #f8fafc;
         border: 1px solid #cbd5e1;
@@ -972,8 +984,8 @@ def main(db_path: str = "data/quant_ko.db") -> None:
     )
     st.markdown(DASHBOARD_CSS, unsafe_allow_html=True)
 
-    # 상단 우측 실전 계좌 금액 마스킹 프라이버시 토글 스위치
-    pcol1, pcol2 = st.columns([0.78, 0.22])
+    # 상단 우측 실전 계좌 금액 마스킹 프라이버시 토글 스위치 (말줄임 방지를 위한 충분한 너비 할당)
+    pcol1, pcol2 = st.columns([0.55, 0.45])
     with pcol2:
         privacy_mode = st.toggle(
             "🔒 실전 금액 숨기기 (프라이버시 모드)",
