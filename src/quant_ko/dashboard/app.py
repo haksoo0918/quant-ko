@@ -680,7 +680,8 @@ def _render_tab1_equity_and_portfolio(
             styled_yearly["KOSPI 지수"] = styled_yearly["KOSPI 지수"].map(lambda v: f"{v:+.2f}%")
             styled_yearly["KOSDAQ 지수"] = styled_yearly["KOSDAQ 지수"].map(lambda v: f"{v:+.2f}%")
             styled_yearly["KOSPI 대비 초과수익"] = styled_yearly["KOSPI 대비 초과수익"].map(lambda v: f"{v:+.2f}%p")
-            st.dataframe(styled_yearly, use_container_width=True, hide_index=True)
+            # 11개 행 전체가 스크롤 없이 한눈에 딱 맞게 표시되도록 높이 지정 (헤더 38px + 11행*35px = 약 430px)
+            st.dataframe(styled_yearly, use_container_width=True, hide_index=True, height=435)
     else:
         st.info("10.5개년 백테스트 시계열 데이터가 준비되지 않았습니다.")
 
