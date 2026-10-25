@@ -108,6 +108,11 @@ DASHBOARD_CSS = """
         font-size: clamp(0.82rem, 1.3vw, 0.9rem) !important;
         white-space: nowrap !important;
     }
+    /* 다크 배너 위에서 토글 스위치 알약 트랙이 배경에 묻혀 흰색 점만 보이는 현상 방지 */
+    div[data-testid="stLayoutWrapper"]:has(.quant-header-banner) [data-testid="stCheckbox"] label > div:nth-of-type(1) {
+        background-color: #334155 !important;
+        border: 1px solid #64748b !important;
+    }
     .quant-badge-container {
         display: flex;
         flex-wrap: wrap;
