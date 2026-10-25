@@ -129,12 +129,18 @@ DASHBOARD_CSS = """
         background-color: #334155 !important;
         border: 1px solid #64748b !important;
     }
+    /* Streamlit 마크다운 기본 음수 마진(-16px)으로 인해 뱃지(버튼형 박스)가 하단 패딩선에 겹치던 결함 원천 차단 */
+    div[data-testid="stLayoutWrapper"]:has(.quant-header-banner) [data-testid="stMarkdownContainer"],
+    div[data-testid="stLayoutWrapper"]:has(.quant-header-banner) [data-testid="stMarkdownContainer"] > *:last-child {
+        margin-bottom: 0 !important;
+    }
     .quant-badge-container {
         display: flex;
         flex-wrap: wrap;
         align-items: center;
         gap: 0.5rem;
         width: 100%;
+        padding-bottom: 12px !important;
     }
     .quant-badge {
         display: inline-flex;
