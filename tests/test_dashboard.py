@@ -330,3 +330,140 @@ def test_db_status_and_plotly_figures(sample_dashboard_db: Path) -> None:
     assert latest_dt == "2026-10-16"
     assert univ_cnt == 0
     assert top_df.empty
+
+
+def test_streamlit_dashboard_full_ui_rendering_audit(
+    sample_dashboard_db: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """대시보드 main() 실행 시 4대 탭, 메트릭, 차트, 테이블, 버튼 인터랙션이 예외 없이 렌더링되는지 검증합니다."""
+    from contextlib import contextmanager
+    from typing import Any
+
+    from quant_ko.dashboard import app as dashboard_app
+
+    class _MockColumnOrTab:
+        def __init__(self, recorder: _MockStreamlit) -> None:
+            self._st = recorder
+
+        def __enter__(self) -> _MockColumnOrTab:
+            return self
+
+        def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
+            return None
+
+        def metric(self, label: str, value: Any, delta: Any = None) -> None:
+            self._st.metric(label=label, value=value, delta=delta)
+
+        def selectbox(self, label: str, options: list[Any], **kwargs: Any) -> Any:
+            return self._st.selectbox(label=label, options=options, **kwargs)
+
+    class _MockStreamlit:
+        def __init__(self, button_clicked: bool = False) -> None:
+            self.button_clicked = button_clicked
+            self.page_config: dict[str, Any] = {}
+            self.markdowns: list[str] = []
+            self.subheaders: list[str] = []
+            self.metrics: list[tuple[str, Any, Any]] = []
+            self.plotly_charts: list[Any] = []
+            self.dataframes: list[Any] = []
+            self.tabs_created: list[str] = []
+            self.selectboxes: list[str] = []
+            self.download_buttons: list[str] = []
+            self.success_messages: list[str] = []
+            self.info_messages: list[str] = []
+            self.warning_messages: list[str] = []
+
+        def set_page_config(self, **kwargs: Any) -> None:
+            self.page_config = kwargs
+
+        def markdown(self, body: str, **kwargs: Any) -> None:
+            self.markdowns.append(body)
+
+        def subheader(self, body: str, **kwargs: Any) -> None:
+            self.subheaders.append(body)
+
+        def divider(self) -> None:
+            pass
+
+        def columns(self, spec: int | list[int]) -> list[_MockColumnOrTab]:
+            count = spec if isinstance(spec, int) else len(spec)
+            return [_MockColumnOrTab(self) for _ in range(count)]
+
+        def tabs(self, tab_labels: list[str]) -> list[_MockColumnOrTab]:
+            self.tabs_created.extend(tab_labels)
+            return [_MockColumnOrTab(self) for _ in tab_labels]
+
+        def metric(self, label: str, value: Any, delta: Any = None) -> None:
+            self.metrics.append((label, value, delta))
+
+        def plotly_chart(self, fig: Any, **kwargs: Any) -> None:
+            self.plotly_charts.append(fig)
+
+        def dataframe(self, data: Any, **kwargs: Any) -> None:
+            self.dataframes.append(data)
+
+        def selectbox(self, label: str, options: list[Any], **kwargs: Any) -> Any:
+            self.selectboxes.append(label)
+            return options[0]
+
+        def download_button(self, label: str, **kwargs: Any) -> bool:
+            self.download_buttons.append(label)
+            return False
+
+        def button(self, label: str, **kwargs: Any) -> bool:
+            return self.button_clicked
+
+        def info(self, body: str) -> None:
+            self.info_messages.append(body)
+
+        def warning(self, body: str) -> None:
+            self.warning_messages.append(body)
+
+        def success(self, body: str) -> None:
+            self.success_messages.append(body)
+
+        @contextmanager
+        def expander(self, label: str) -> Any:
+            yield self
+
+        @contextmanager
+        def spinner(self, text: str) -> Any:
+            yield self
+
+        def image(self, image: Any, **kwargs: Any) -> None:
+            pass
+
+    orig_load_acc = dashboard_app.load_account_and_positions
+    monkeypatch.setattr(
+        dashboard_app,
+        "load_account_and_positions",
+        lambda db_path="data/quant_ko.db", fetch_live_kis=True: orig_load_acc(
+            db_path=db_path,
+            fetch_live_kis=False,
+        ),
+    )
+
+    mock_st = _MockStreamlit(button_clicked=True)
+    monkeypatch.setattr(dashboard_app, "st", mock_st)
+
+    dashboard_app.main(db_path=str(sample_dashboard_db))
+
+    # 4개 필수 탭 검증
+    assert mock_st.tabs_created == [
+        "📈 전체 자산 변화 추이 & 보유 포트폴리오",
+        "🧾 실제 거래기록 (Orders)",
+        "🎯 전략 소개 (Strategy Spec)",
+        "🔍 최신 타깃 20종목 & 시스템 상태",
+    ]
+    # 상단 4개 KPI + Tab 2 주문 4개 KPI + Tab 4 DB 상태 4개 KPI = 총 12개 메트릭
+    assert len(mock_st.metrics) == 12
+    # Tab 1의 3대 Plotly 차트 (Equity Curve, Portfolio Allocation, Backtest Comparison)
+    assert len(mock_st.plotly_charts) == 3
+    # 보유 종목 테이블 및 거래기록 테이블 렌더링 검증
+    assert len(mock_st.dataframes) >= 2
+    assert len(mock_st.selectboxes) == 3
+    assert len(mock_st.download_buttons) == 1
+    assert len(mock_st.success_messages) == 1
+
+
