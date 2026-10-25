@@ -12,8 +12,14 @@
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 from typing import Any
+
+# src 디렉터리를 sys.path에 자동 등록하여 Streamlit 단독 실행 시 quant_ko 모듈 임포트 보장
+_src_dir = Path(__file__).resolve().parent.parent.parent
+if str(_src_dir) not in sys.path:
+    sys.path.insert(0, str(_src_dir))
 
 import pandas as pd
 import plotly.graph_objects as go
