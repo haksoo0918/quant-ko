@@ -433,6 +433,10 @@ def test_streamlit_dashboard_full_ui_rendering_audit(
             pass
 
         @contextmanager
+        def container(self, **kwargs: Any) -> Any:
+            yield self
+
+        @contextmanager
         def expander(self, label: str, **kwargs: Any) -> Any:
             yield self
 

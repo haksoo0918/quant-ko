@@ -75,20 +75,38 @@ DASHBOARD_CSS = """
         padding-right: clamp(1rem, 3vw, 2.5rem) !important;
         max-width: 1400px;
     }
-    .quant-banner {
-        background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
-        border: 1px solid #334155;
-        border-radius: 12px;
-        padding: clamp(1rem, 2vw, 1.35rem);
-        margin-bottom: 1.25rem;
-        color: #f8fafc;
+    /* 상단 배너 카드 통합 컨테이너 (타이틀+뱃지+프라이버시 토글 일체형) */
+    div[data-testid="stLayoutWrapper"]:has(.quant-header-banner) {
+        background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%) !important;
+        border: 1px solid #334155 !important;
+        border-radius: 12px !important;
+        padding: clamp(0.9rem, 1.8vw, 1.35rem) !important;
+        margin-bottom: 1.25rem !important;
+        color: #f8fafc !important;
     }
-    .quant-banner h1 {
-        margin: 0 0 0.75rem 0;
-        font-size: clamp(1.1rem, 3vw, 1.65rem) !important;
-        color: #f8fafc;
-        line-height: 1.35;
-        word-break: keep-all;
+    div[data-testid="stLayoutWrapper"]:has(.quant-header-banner) > div[data-testid="stVerticalBlock"] {
+        border: none !important;
+        background: transparent !important;
+        padding: 0 !important;
+    }
+    div[data-testid="stLayoutWrapper"]:has(.quant-header-banner) h1 {
+        margin: 0 0 0.75rem 0 !important;
+        font-size: clamp(1.1rem, 2.5vw, 1.6rem) !important;
+        color: #f8fafc !important;
+        line-height: 1.35 !important;
+        word-break: keep-all !important;
+    }
+    div[data-testid="stLayoutWrapper"]:has(.quant-header-banner) [data-testid="stCheckbox"] {
+        display: flex !important;
+        justify-content: flex-end !important;
+        align-items: center !important;
+        margin-top: 0.35rem !important;
+    }
+    div[data-testid="stLayoutWrapper"]:has(.quant-header-banner) [data-testid="stCheckbox"] label p {
+        color: #f8fafc !important;
+        font-weight: 600 !important;
+        font-size: clamp(0.82rem, 1.3vw, 0.9rem) !important;
+        white-space: nowrap !important;
     }
     .quant-badge-container {
         display: flex;
@@ -557,9 +575,9 @@ def create_backtest_comparison_figure() -> go.Figure:
 
 
 def _render_top_header_and_kpis(
-    acc_info: dict[str, Any], privacy_mode: bool = False
-) -> None:
-    """상단 운용 모드 배너 및 4대 핵심 KPI 메트릭 카드를 렌더링합니다."""
+    acc_info: dict[str, Any],
+) -> bool:
+    """상단 일체형 운용 배너(타이틀, 뱃지, 프라이버시 토글) 및 4대 핵심 KPI 메트릭 카드를 렌더링합니다."""
     is_mock = bool(acc_info.get("is_mock", True))
     is_parking = bool(acc_info.get("is_parking_season", True))
     account_masked = str(acc_info.get("account_masked", "5021****-01"))
@@ -586,25 +604,29 @@ def _render_top_header_and_kpis(
         f"⏳ 차기 리밸런싱: {countdown['target_date']} 15:20 ({countdown['formatted_countdown']})"
     )
 
-    privacy_badge = (
-        '<span class="quant-badge" style="background-color:#064e3b; color:#a7f3d0;">🔒 프라이버시 보호 모드 ON</span>'
-        if privacy_mode
-        else ""
-    )
-
-    banner_html = (
-        '<div class="quant-banner" role="region" aria-label="Quant-KO 운용 상태 요약 배너">'
-        "<h1>📊 Quant-KO 소형주 성장·가치 자동매매 모니터링 대시보드</h1>"
-        '<div class="quant-badge-container">'
-        f'<span class="quant-badge {mode_badge_cls}">{mode_badge_text}</span>'
-        f'<span class="quant-badge {season_badge_cls}">{season_badge_text}</span>'
-        f'<span class="quant-badge badge-countdown">{rebalance_badge_text}</span>'
-        f'<span class="quant-badge badge-account">계좌: {account_masked}</span>'
-        f'<span class="quant-badge badge-account">데이터 소스: {source_label}</span>'
-        f"{privacy_badge}"
-        "</div></div>"
-    )
-    st.markdown(banner_html, unsafe_allow_html=True)
+    with st.container(border=True):
+        st.markdown('<div class="quant-header-banner" style="display:none;"></div>', unsafe_allow_html=True)
+        hcol1, hcol2 = st.columns([0.74, 0.26])
+        with hcol1:
+            header_html = (
+                "<h1>📊 Quant-KO 소형주 성장·가치 자동매매 모니터링 대시보드</h1>"
+                '<div class="quant-badge-container">'
+                f'<span class="quant-badge {mode_badge_cls}">{mode_badge_text}</span>'
+                f'<span class="quant-badge {season_badge_cls}">{season_badge_text}</span>'
+                f'<span class="quant-badge badge-countdown">{rebalance_badge_text}</span>'
+                f'<span class="quant-badge badge-account">계좌: {account_masked}</span>'
+                f'<span class="quant-badge badge-account">데이터 소스: {source_label}</span>'
+                "</div>"
+            )
+            st.markdown(header_html, unsafe_allow_html=True)
+        with hcol2:
+            privacy_mode = bool(
+                st.toggle(
+                    "🔒 실전 금액 숨기기 (프라이버시)",
+                    value=False,
+                    help="실전 투자 시 전체 자산 평가액, 예수금, 보유 종목별 매입/평가금액을 '***원'으로 마스킹합니다.",
+                )
+            )
 
     col1, col2, col3, col4 = st.columns(4)
     total_eq = float(acc_info.get("total_equity", 0.0))
@@ -641,6 +663,7 @@ def _render_top_header_and_kpis(
         value=f"{pos_cnt}종목 / {ord_cnt}건",
         delta="동일비중 목표 20종목",
     )
+    return privacy_mode
 
 
 def _render_tab1_equity_and_portfolio(
@@ -997,17 +1020,8 @@ def main(db_path: str = "data/quant_ko.db") -> None:
     )
     st.markdown(DASHBOARD_CSS, unsafe_allow_html=True)
 
-    # 상단 우측 실전 계좌 금액 마스킹 프라이버시 토글 스위치 (말줄임 방지를 위한 충분한 너비 할당)
-    pcol1, pcol2 = st.columns([0.55, 0.45])
-    with pcol2:
-        privacy_mode = st.toggle(
-            "🔒 실전 금액 숨기기 (프라이버시 모드)",
-            value=False,
-            help="실전 투자 시 전체 자산 평가액, 예수금, 보유 종목별 매입/평가금액을 '***원'으로 마스킹합니다.",
-        )
-
     acc_info = load_account_and_positions(db_path=db_path, fetch_live_kis=True)
-    _render_top_header_and_kpis(acc_info, privacy_mode=privacy_mode)
+    privacy_mode = _render_top_header_and_kpis(acc_info)
 
     tab1, tab2, tab3, tab4 = st.tabs(
         [
