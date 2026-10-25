@@ -7,9 +7,10 @@ KIS Open API 실시간 잔고 조회 및 오프라인(SQLite DB 기반) 폴백,
 
 from __future__ import annotations
 
+import calendar
 import logging
 import os
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 from typing import Any
 
@@ -599,8 +600,165 @@ def load_top20_preview(
     out["PGPR"] = out["pgpr"].astype(float).round(2)
     out["부채비율(%)"] = out["debt_ratio"].astype(float).round(1)
     out["Total Rank"] = out["total_rank"].astype(int)
+    # 팩터 프로파일 분석용 평균 순위 (값이 작을수록 우수)
+    val_cols = ["rank_per", "rank_psr", "rank_por", "rank_pgpr"]
+    gro_cols = [
+        "rank_revenue_yoy",
+        "rank_gross_profit_yoy",
+        "rank_op_income_yoy",
+        "rank_net_income_owner_yoy",
+    ]
+    present_val = [c for c in val_cols if c in out.columns]
+    present_gro = [c for c in gro_cols if c in out.columns]
+    out["밸류순위평균"] = (
+        out[present_val].mean(axis=1).round(1) if present_val else 0.0
+    )
+    out["성장순위평균"] = (
+        out[present_gro].mean(axis=1).round(1) if present_gro else 0.0
+    )
 
     return (target_date, universe_count, out)
+
+
+def get_next_rebalance_countdown(
+    now_dt: datetime | None = None,
+) -> dict[str, Any]:
+    """차기 정기 리밸런싱(매월 마지막 평일 15:20)까지 남은 D-Day 및 시간을 계산합니다."""
+    if now_dt is None:
+        now_dt = datetime.now()
+
+    year = now_dt.year
+    month = now_dt.month
+
+    # 당월 마지막 평일 탐색
+    last_day = calendar.monthrange(year, month)[1]
+    d = date(year, month, last_day)
+    while d.weekday() >= 5:  # 5=토요일, 6=일요일
+        d = date(year, month, d.day - 1)
+
+    target_dt = datetime(d.year, d.month, d.day, 15, 20, 0)
+    # 이미 당월 15:20을 넘겼다면 다음 달 마지막 평일로 이동
+    if now_dt > target_dt:
+        if month == 12:
+            next_year = year + 1
+            next_month = 1
+        else:
+            next_year = year
+            next_month = month + 1
+        next_last_day = calendar.monthrange(next_year, next_month)[1]
+        d = date(next_year, next_month, next_last_day)
+        while d.weekday() >= 5:
+            d = date(next_year, next_month, d.day - 1)
+        target_dt = datetime(d.year, d.month, d.day, 15, 20, 0)
+
+    diff = target_dt - now_dt
+    days_left = diff.days
+    hours_left = diff.seconds // 3600
+    minutes_left = (diff.seconds % 3600) // 60
+    is_today = now_dt.date() == target_dt.date()
+    is_action_window = is_today and (target_dt.hour == now_dt.hour and 10 <= now_dt.minute <= 30)
+
+    return {
+        "target_date": target_dt.strftime("%Y-%m-%d"),
+        "target_time": "15:20",
+        "days_left": max(0, days_left),
+        "hours_left": max(0, hours_left),
+        "minutes_left": max(0, minutes_left),
+        "is_today": is_today,
+        "is_action_window": is_action_window,
+        "formatted_countdown": f"D-{days_left}일 {hours_left}시간 {minutes_left}분",
+    }
+
+
+def diagnose_held_positions_risk(
+    positions_df: pd.DataFrame,
+    db_path: str | Path = "data/quant_ko.db",
+) -> list[dict[str, Any]]:
+    """보유 종목에 대해 관리종목·투자주의환기종목 지정 여부 및 재무 건전성 위험을 실시간 진단합니다."""
+    diagnoses: list[dict[str, Any]] = []
+    if positions_df.empty:
+        return diagnoses
+
+    store = DataStore(db_path)
+    tickers = [str(t).strip() for t in positions_df["ticker"] if str(t).strip()]
+    if not tickers:
+        return diagnoses
+
+    # 1. 관리종목 / 투자주의환기종목 조회
+    desig_map: dict[str, str] = {}
+    try:
+        active_desigs = store.get_designations(as_of_date=datetime.now().strftime("%Y-%m-%d"))
+        if not active_desigs.empty and "ticker" in active_desigs.columns:
+            for _, row in active_desigs.iterrows():
+                t = str(row["ticker"]).strip()
+                dtype = str(row.get("type", "지정종목")).strip()
+                desig_map[t] = dtype
+    except Exception as exc:
+        logger.warning("관리종목 조회 중 예외 (정상 간주): %s", exc)
+
+    # 2. 최신 재무제표(자본잠식/부채비율) 조회
+    fin_map: dict[str, dict[str, float]] = {}
+    try:
+        placeholders = ",".join("?" for _ in tickers)
+        query = f"""
+            SELECT c.ticker, f.total_equity, f.capital_stock, f.total_liabilities
+            FROM companies c
+            JOIN financials f ON c.corp_code = f.corp_code
+            WHERE c.ticker IN ({placeholders})
+            ORDER BY f.fiscal_year DESC, f.quarter DESC
+        """
+        with store.get_connection() as conn:
+            fin_df = pd.read_sql_query(query, conn, params=tickers)
+        for _, row in fin_df.drop_duplicates(subset=["ticker"]).iterrows():
+            t = str(row["ticker"]).strip()
+            te = float(row["total_equity"] or 0.0)
+            cs = float(row["capital_stock"] or 0.0)
+            tl = float(row["total_liabilities"] or 0.0)
+            impairment = ((cs - te) / cs * 100.0) if cs > 0 else 0.0
+            debt = (tl / te * 100.0) if te > 0 else 0.0
+            fin_map[t] = {"impairment_ratio": impairment, "debt_ratio": debt}
+    except Exception as exc:
+        logger.warning("보유종목 재무 위험 조회 실패: %s", exc)
+
+    # 3. 종합 위험도 판정
+    for _, pos in positions_df.iterrows():
+        t = str(pos["ticker"]).strip()
+        name = str(pos.get("name", t)).strip()
+        issues: list[str] = []
+        severity = "NORMAL"  # NORMAL, WARNING, DANGER
+
+        if t in desig_map:
+            severity = "DANGER"
+            issues.append(f"🚨 {desig_map[t]} 지정 (익일 08:30 시장가 긴급 청산 대상)")
+
+        fin_info = fin_map.get(t, {})
+        imp = fin_info.get("impairment_ratio", 0.0)
+        debt = fin_info.get("debt_ratio", 0.0)
+
+        if imp > 0:
+            if severity != "DANGER":
+                severity = "DANGER"
+            issues.append(f"⚠️ 자본잠식 발생 ({imp:.1f}%)")
+        elif debt > 300.0:
+            if severity == "NORMAL":
+                severity = "WARNING"
+            issues.append(f"주의: 고부채비율 ({debt:.1f}%)")
+
+        if not issues:
+            issues.append("✅ 정상 (위험요소 없음, TTM 흑자 유지)")
+
+        diagnoses.append(
+            {
+                "ticker": t,
+                "name": name,
+                "severity": severity,
+                "issues": " · ".join(issues),
+                "debt_ratio": debt,
+                "impairment_ratio": imp,
+            }
+        )
+
+    return diagnoses
 
 
 def get_db_status_summary(db_path: str | Path = "data/quant_ko.db") -> dict[str, Any]:

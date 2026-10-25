@@ -21,7 +21,9 @@ from plotly.subplots import make_subplots
 
 from quant_ko.dashboard.data_loader import (
     build_account_equity_curve,
+    diagnose_held_positions_risk,
     get_db_status_summary,
+    get_next_rebalance_countdown,
     load_account_and_positions,
     load_actual_trade_logs,
     load_top20_preview,
@@ -92,6 +94,38 @@ DASHBOARD_CSS = """
         border: 1px solid #334155;
         font-size: 0.95rem;
         margin: 0.75rem 0;
+    }
+    .badge-countdown {
+        background-color: #4338ca;
+        color: #c7d2fe;
+        font-weight: 700;
+    }
+    .risk-card-normal {
+        background-color: #f0fdf4;
+        border: 1px solid #bbf7d0;
+        border-left: 4px solid #16a34a;
+        border-radius: 6px;
+        padding: 0.75rem 1rem;
+        margin-bottom: 0.5rem;
+        color: #14532d;
+    }
+    .risk-card-warning {
+        background-color: #fffbeb;
+        border: 1px solid #fde68a;
+        border-left: 4px solid #f59e0b;
+        border-radius: 6px;
+        padding: 0.75rem 1rem;
+        margin-bottom: 0.5rem;
+        color: #78350f;
+    }
+    .risk-card-danger {
+        background-color: #fef2f2;
+        border: 1px solid #fecaca;
+        border-left: 4px solid #dc2626;
+        border-radius: 6px;
+        padding: 0.75rem 1rem;
+        margin-bottom: 0.5rem;
+        color: #7f1d1d;
     }
 </style>
 """
@@ -345,6 +379,11 @@ def _render_top_header_and_kpis(acc_info: dict[str, Any]) -> None:
         else "🔥 11~4월 소형주 적극 투자기"
     )
 
+    countdown = get_next_rebalance_countdown()
+    rebalance_badge_text = (
+        f"⏳ 차기 리밸런싱: {countdown['target_date']} 15:20 ({countdown['formatted_countdown']})"
+    )
+
     st.markdown(
         f"""
         <div class="quant-banner" role="region" aria-label="Quant-KO 운용 상태 요약 배너">
@@ -354,6 +393,7 @@ def _render_top_header_and_kpis(acc_info: dict[str, Any]) -> None:
             <div>
                 <span class="quant-badge {mode_badge_cls}">{mode_badge_text}</span>
                 <span class="quant-badge {season_badge_cls}">{season_badge_text}</span>
+                <span class="quant-badge badge-countdown">{rebalance_badge_text}</span>
                 <span class="quant-badge badge-account">계좌: {account_masked}</span>
                 <span class="quant-badge badge-account">데이터 소스: {source_label}</span>
             </div>
@@ -428,6 +468,31 @@ def _render_tab1_equity_and_portfolio(acc_info: dict[str, Any], db_path: str) ->
             }
         )
         st.dataframe(display_pos, use_container_width=True, hide_index=True)
+
+        # 보유 종목 긴급 리스크 및 재무 건전성 진단 섹션
+        diagnoses = diagnose_held_positions_risk(positions_df, db_path=db_path)
+        with st.expander("🛡️ 보유 종목 긴급 리스크 & 관리종목 진단 (08:30 일일 감시 연동)", expanded=True):
+            danger_cnt = sum(1 for d in diagnoses if d["severity"] == "DANGER")
+            warning_cnt = sum(1 for d in diagnoses if d["severity"] == "WARNING")
+            if danger_cnt > 0:
+                st.error(f"🚨 긴급 청산 대상 종목이 {danger_cnt}건 발견되었습니다! (다음 개장일 08:30 시장가 전량 청산)")
+            elif warning_cnt > 0:
+                st.warning(f"⚠️ 주의 관찰 종목이 {warning_cnt}건 있습니다. (고부채비율 등)")
+            else:
+                st.success("✅ 현재 보유 중인 모든 종목이 관리종목/투자주의환기/자본잠식 위험 없이 정상 상태입니다.")
+
+            for diag in diagnoses:
+                sev = diag["severity"]
+                cls_name = "risk-card-normal" if sev == "NORMAL" else ("risk-card-danger" if sev == "DANGER" else "risk-card-warning")
+                st.markdown(
+                    f"""
+                    <div class="{cls_name}">
+                        <strong>{diag['name']} ({diag['ticker']})</strong>: {diag['issues']}
+                        <span style="float:right; font-size:0.85rem;">부채비율: {diag['debt_ratio']:.1f}% | 자본잠식률: {diag['impairment_ratio']:.1f}%</span>
+                    </div>
+                    """,
+                    unsafe_allow_html=True,
+                )
 
     st.divider()
     st.subheader("3️⃣ 10.5개년 백테스트 누적 자산 성장 비교 요약 (2016.04 ~ 2026.10)")
@@ -627,10 +692,56 @@ def _render_tab4_universe_and_status(db_path: str) -> None:
                 "POR",
                 "PGPR",
                 "부채비율(%)",
+                "밸류순위평균",
+                "성장순위평균",
                 "Total Rank",
             ]
             available_cols = [c for c in cols if c in top20_df.columns]
             st.dataframe(top20_df[available_cols], use_container_width=True, hide_index=True)
+
+            # 팩터 밸런스 프로파일 시각화 (밸류 vs 성장 순위 비교)
+            if "밸류순위평균" in top20_df.columns and "성장순위평균" in top20_df.columns:
+                st.markdown("#### ⚖️ Top 20 종목 밸류(저평가) vs 성장(고성장) 팩터 프로파일")
+                st.caption("※ 순위 수치가 낮을수록(왼쪽·아래쪽) 해당 팩터에서 더 우수한 종목입니다.")
+                fig_factor = go.Figure()
+                fig_factor.add_trace(
+                    go.Scatter(
+                        x=top20_df["밸류순위평균"],
+                        y=top20_df["성장순위평균"],
+                        mode="markers+text",
+                        text=top20_df["종목명"],
+                        textposition="top center",
+                        marker={
+                            "size": 11,
+                            "color": top20_df["Total Rank"],
+                            "colorscale": "Viridis",
+                            "showscale": True,
+                            "colorbar": {"title": "Total Rank"},
+                        },
+                        hovertemplate=(
+                            "<b>%{text} (%{customdata[0]})</b><br>"
+                            "시가총액: %{customdata[1]:,.1f}억원<br>"
+                            "밸류 4종 평균 순위: %{x:.1f}위<br>"
+                            "성장 4종 평균 순위: %{y:.1f}위<br>"
+                            "종합 Total Rank: %{marker.color}위<extra></extra>"
+                        ),
+                        customdata=list(
+                            zip(
+                                top20_df["종목코드"],
+                                top20_df["시가총액(억)"],
+                                strict=False,
+                            )
+                        ),
+                    )
+                )
+                fig_factor.update_layout(
+                    height=450,
+                    template="plotly_white",
+                    xaxis_title="밸류 4종 팩터 평균 순위 (작을수록 저평가 우수)",
+                    yaxis_title="성장 4종 팩터 평균 순위 (작을수록 고성장 우수)",
+                    margin={"l": 40, "r": 30, "t": 30, "b": 40},
+                )
+                st.plotly_chart(fig_factor, use_container_width=True)
 
 
 def main(db_path: str = "data/quant_ko.db") -> None:

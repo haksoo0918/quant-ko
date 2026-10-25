@@ -133,6 +133,9 @@
 ### P1 (Should-Have)
 
 - [x] 백테스트 시각화 대시보드 및 인터랙티브 차트 HTML/PNG 생성 (`scripts/generate_charts.py`)
+- [x] Streamlit + Plotly 올인원 실시간 모니터링 대시보드 (src/quant_ko/dashboard/app.py)
+  - 4대 핵심 탭: 전체 자산 변화 추이/보유 포트폴리오, 실제 거래기록(3중 필터/CSV), 전략 명세(Order B/9대 팩터/계절성), 시스템 상태 및 Top 20 실시간 산출
+  - 추가 고도화: 차기 리밸런싱 카운트다운 배너, 보유 종목 긴급 리스크 진단 카드, Top 20 팩터 밸런스 비교 차트
 - [x] 윈도우 작업 스케줄러 자동 등록 스크립트 (`scripts/setup_windows_scheduler.ps1`)
 - [ ] 과거 관리종목/투자주의환기 지정 이력 수집 (KIND 또는 DART 공시)
 - [ ] 백테스트 파라미터 변경 이력 로그 (과적합 추적용)
