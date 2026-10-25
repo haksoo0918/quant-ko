@@ -643,10 +643,11 @@ def _render_top_header_and_kpis(
     stock_display = "***원" if privacy_mode else f"{stock_val:,.0f}원"
     cash_display = "***원" if privacy_mode else f"{cash_val:,.0f}원"
 
+    ret_label = str(acc_info.get("return_label") or f"{ret_pct:+.2f}% (초기자본 대비)")
     col1.metric(
         label="💰 총 자산 평가액",
         value=total_display,
-        delta=f"{ret_pct:+.2f}% (초기자본 대비)",
+        delta=ret_label,
     )
     col2.metric(
         label="📈 주식 평가금액",

@@ -151,6 +151,14 @@ def load_account_and_positions(
     prdt_cd = os.getenv(f"{prefix}ACNT_PRDT_CD") or os.getenv("KIS_ACNT_PRDT_CD", "01")
     masked_acc = mask_account_no(cano, prdt_cd)
 
+    # 환경변수 INITIAL_CAPITAL 설정 시 기본값 오버라이드
+    env_cap = os.getenv("INITIAL_CAPITAL")
+    if env_cap:
+        try:
+            initial_capital = float(env_cap)
+        except (ValueError, TypeError):
+            pass
+
     today_str = datetime.now().strftime("%Y-%m-%d")
     is_parking_season = is_seasonality_parking_period(today_str)
 
@@ -211,18 +219,35 @@ def load_account_and_positions(
                     )
 
                 positions_list.sort(key=lambda x: x["eval_amount"], reverse=True)
+# 미입금/운용 대기 상태 감지: 보유 종목이 없고 과거 체결 주문도 없으며 잔고가 초기자본의 10% 미만인 경우
+                is_unfunded = (
+                    len(positions_list) == 0
+                    and total_orders_count == 0
+                    and total_equity < (initial_capital * 0.1)
+                )
+                if is_unfunded:
+                    return_pct = 0.0
+                    return_label = "0.00% (운용 대기)"
+                else:
+                    return_pct = (
+                        round(((total_equity / initial_capital) - 1.0) * 100.0, 2)
+                        if initial_capital > 0
+                        else 0.0
+                    )
+                    return_label = f"{return_pct:+.2f}% (초기자본 대비)"
+
                 return {
                     "kis_mode": "MOCK" if is_mock else "REAL",
                     "is_mock": is_mock,
                     "account_masked": mask_account_no(client.account_prefix, client.account_suffix),
                     "is_parking_season": is_parking_season,
                     "source": "KIS_LIVE",
+                    "initial_capital": initial_capital,
                     "cash": round(cash, 0),
                     "stock_value": round(stock_value, 0),
                     "total_equity": round(total_equity, 0),
-                    "return_pct": round(((total_equity / initial_capital) - 1.0) * 100.0, 2)
-                    if initial_capital > 0
-                    else 0.0,
+                    "return_pct": return_pct,
+                    "return_label": return_label,
                     "positions_count": len(positions_list),
                     "total_orders_count": total_orders_count,
                     "positions": positions_list,
@@ -293,6 +318,22 @@ def load_account_and_positions(
         )
 
     total_equity = cash + stock_value
+    is_unfunded = (
+        len(positions_list) == 0
+        and total_orders_count == 0
+        and total_equity < (initial_capital * 0.1)
+    )
+    if is_unfunded:
+        return_pct = 0.0
+        return_label = "0.00% (운용 대기)"
+    else:
+        return_pct = (
+            round(((total_equity / initial_capital) - 1.0) * 100.0, 2)
+            if initial_capital > 0
+            else 0.0
+        )
+        return_label = f"{return_pct:+.2f}% (초기자본 대비)"
+
     for item in positions_list:
         item["weight_pct"] = (
             round((item["eval_amount"] / total_equity) * 100.0, 2)
@@ -307,12 +348,12 @@ def load_account_and_positions(
         "account_masked": masked_acc,
         "is_parking_season": is_parking_season,
         "source": "SQLITE_FALLBACK",
+        "initial_capital": initial_capital,
         "cash": round(cash, 0),
         "stock_value": round(stock_value, 0),
         "total_equity": round(total_equity, 0),
-        "return_pct": round(((total_equity / initial_capital) - 1.0) * 100.0, 2)
-        if initial_capital > 0
-        else 0.0,
+        "return_pct": return_pct,
+        "return_label": return_label,
         "positions_count": len(positions_list),
         "total_orders_count": total_orders_count,
         "positions": positions_list,

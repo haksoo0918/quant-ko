@@ -12,6 +12,9 @@
   - `requirements.txt` 및 `.streamlit/config.toml` 테마/서버 설정 완비.
   - `app.py` 내 `st.secrets` -> `os.environ` 자동 동기화 브릿지 구현으로 클라우드 콘솔 Secrets를 통한 KIS 실시간 계좌 연동 지원.
   - 10.5개년 백테스트 시계열 데이터(`data/backtest_10y_series.parquet`, 307KB) git 추적 허용 및 Parquet 파싱 `pyarrow` 의존성 등록.
+- **계좌 미입금/운용 대기 예외 처리 및 초기자본금 설정 지원 (`src/quant_ko/dashboard/data_loader.py`)**:
+  - 보유 종목 및 주문 내역이 없는 자투리 잔고 계좌에서 -100.00%로 오표기되던 결함 수정 ➔ `0.00% (운용 대기)` 안내 표시.
+  - `INITIAL_CAPITAL` 환경변수(Secrets)를 통한 본인 실전 운용 자본금 커스텀 설정 기능 추가.
 - **대시보드 상단 배너·프라이버시 토글 일체형 UI 통합 (`src/quant_ko/dashboard/app.py`)**:
   - 배너 상단에 어색하게 떠 있던 빈 여백 및 독립 토글 스위치를 다크 블루 배너 카드 내부(우측 상단)로 완벽히 일체화.
   - Streamlit 기본 상단 개발자 툴바(Deploy 버튼 및 메뉴) 완전 은닉(display: none !important) 처리로 상단 여백 확보 및 화면 잘림 결함 원천 차단.

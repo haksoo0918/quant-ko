@@ -481,4 +481,53 @@ def test_streamlit_dashboard_full_ui_rendering_audit(
     # 정상 진단 메시지 및 타깃 산출 메시지 확인
     assert len(mock_st.success_messages) >= 1
 
+def test_load_account_and_positions_unfunded_waiting(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """보유종목과 주문이 없는 자투리 잔고 계좌(예: 453원)는 -100%가 아니라 0.00% (운용 대기)로 처리되는지 검증합니다."""
+    db_file = tmp_path / "empty_acc.db"
+    store = DataStore(db_file)
+    store.initialize_schema()
+
+    class EmptyBalanceKisClient:
+        app_key = "dummy_key"
+        app_secret = "dummy_secret"
+        account_prefix = "50219999"
+        account_suffix = "01"
+
+        def fetch_balance(self) -> Balance:
+            return Balance(
+                cash=453.0,
+                total_eval_amount=453.0,
+                positions=[],
+            )
+
+    monkeypatch.setattr("quant_ko.dashboard.data_loader.KisClient", EmptyBalanceKisClient)
+    info = load_account_and_positions(
+        db_path=db_file,
+        fetch_live_kis=True,
+        initial_capital=10_000_000.0,
+    )
+    assert info["source"] == "KIS_LIVE"
+    assert info["total_equity"] == 453.0
+    assert info["return_pct"] == 0.0
+    assert info["return_label"] == "0.00% (운용 대기)"
+
+
+def test_load_account_and_positions_custom_initial_capital(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """환경변수 INITIAL_CAPITAL이 지정되었을 때 초기자본금이 정확히 반영되는지 검증합니다."""
+    db_file = tmp_path / "empty_acc2.db"
+    store = DataStore(db_file)
+    store.initialize_schema()
+
+    monkeypatch.setenv("INITIAL_CAPITAL", "5000000")
+    info = load_account_and_positions(
+        db_path=db_file,
+        fetch_live_kis=False,
+    )
+    assert info["initial_capital"] == 5_000_000.0
 
