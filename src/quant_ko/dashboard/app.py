@@ -55,8 +55,12 @@ DASHBOARD_CSS = """
         --accent-amber: #f59e0b;
         --accent-red: #ef4444;
     }
+    /* Streamlit 기본 개발자 툴바(Deploy 버튼, 메인 메뉴 등)를 완전히 숨겨 상단 잘림 및 겹침 방지 */
+    header[data-testid="stHeader"] {
+        display: none !important;
+    }
     .block-container {
-        padding-top: 1.8rem !important;
+        padding-top: 1.25rem !important;
         padding-bottom: 3rem !important;
         padding-left: clamp(1rem, 3vw, 2.5rem) !important;
         padding-right: clamp(1rem, 3vw, 2.5rem) !important;
