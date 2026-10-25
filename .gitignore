@@ -59,6 +59,7 @@ htmlcov/
 data/*.pkl
 data/*.json
 data/*.csv
+data/*.parquet
 data/raw/
 data/cache/
 
