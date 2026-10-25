@@ -523,24 +523,20 @@ def _render_top_header_and_kpis(
         else ""
     )
 
-    st.markdown(
-        f"""
-        <div class="quant-banner" role="region" aria-label="Quant-KO 운용 상태 요약 배너">
-            <h1 style="margin:0 0 0.6rem 0; font-size:1.65rem; color:#f8fafc;">
-                📊 Quant-KO 소형주 성장·가치 자동매매 모니터링 대시보드
-            </h1>
-            <div>
-                <span class="quant-badge {mode_badge_cls}">{mode_badge_text}</span>
-                <span class="quant-badge {season_badge_cls}">{season_badge_text}</span>
-                <span class="quant-badge badge-countdown">{rebalance_badge_text}</span>
-                <span class="quant-badge badge-account">계좌: {account_masked}</span>
-                <span class="quant-badge badge-account">데이터 소스: {source_label}</span>
-                {privacy_badge}
-            </div>
-        </div>
-        """,
-        unsafe_allow_html=True,
+    banner_html = (
+        '<div class="quant-banner" role="region" aria-label="Quant-KO 운용 상태 요약 배너">'
+        '<h1 style="margin:0 0 0.6rem 0; font-size:1.65rem; color:#f8fafc;">'
+        "📊 Quant-KO 소형주 성장·가치 자동매매 모니터링 대시보드</h1>"
+        "<div>"
+        f'<span class="quant-badge {mode_badge_cls}">{mode_badge_text}</span>'
+        f'<span class="quant-badge {season_badge_cls}">{season_badge_text}</span>'
+        f'<span class="quant-badge badge-countdown">{rebalance_badge_text}</span>'
+        f'<span class="quant-badge badge-account">계좌: {account_masked}</span>'
+        f'<span class="quant-badge badge-account">데이터 소스: {source_label}</span>'
+        f"{privacy_badge}"
+        "</div></div>"
     )
+    st.markdown(banner_html, unsafe_allow_html=True)
 
     col1, col2, col3, col4 = st.columns(4)
     total_eq = float(acc_info.get("total_equity", 0.0))
