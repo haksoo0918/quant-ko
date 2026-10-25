@@ -75,7 +75,7 @@ DASHBOARD_CSS = """
         padding-right: clamp(1rem, 3vw, 2.5rem) !important;
         max-width: 1400px;
     }
-    /* 상단 배너 카드 통합 컨테이너 (타이틀+뱃지+프라이버시 토글 일체형) */
+    /* 상단 배너 카드 통합 컨테이너 (타이틀+프라이버시 토글+전폭 뱃지 일체형) */
     div[data-testid="stLayoutWrapper"]:has(.quant-header-banner) {
         background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%) !important;
         border: 1px solid #334155 !important;
@@ -83,14 +83,25 @@ DASHBOARD_CSS = """
         padding: clamp(0.9rem, 1.8vw, 1.35rem) !important;
         margin-bottom: 1.25rem !important;
         color: #f8fafc !important;
+        height: auto !important;
     }
-    div[data-testid="stLayoutWrapper"]:has(.quant-header-banner) > div[data-testid="stVerticalBlock"] {
+    div[data-testid="stLayoutWrapper"]:has(.quant-header-banner) div[data-testid="stVerticalBlock"] {
         border: none !important;
         background: transparent !important;
         padding: 0 !important;
+        height: auto !important;
+        gap: 0.65rem !important;
+    }
+    div[data-testid="stLayoutWrapper"]:has(.quant-header-banner) div[data-testid="stHorizontalBlock"] {
+        height: auto !important;
+        align-items: center !important;
+    }
+    div[data-testid="stLayoutWrapper"]:has(.quant-header-banner) div[data-testid="stColumn"] {
+        height: auto !important;
+        min-height: min-content !important;
     }
     div[data-testid="stLayoutWrapper"]:has(.quant-header-banner) h1 {
-        margin: 0 0 0.75rem 0 !important;
+        margin: 0 !important;
         font-size: clamp(1.1rem, 2.5vw, 1.6rem) !important;
         color: #f8fafc !important;
         line-height: 1.35 !important;
@@ -100,13 +111,18 @@ DASHBOARD_CSS = """
         display: flex !important;
         justify-content: flex-end !important;
         align-items: center !important;
-        margin-top: 0.35rem !important;
+        margin: 0 !important;
+    }
+    div[data-testid="stLayoutWrapper"]:has(.quant-header-banner) [data-testid="stCheckbox"] label {
+        align-items: center !important;
+        margin: 0 !important;
     }
     div[data-testid="stLayoutWrapper"]:has(.quant-header-banner) [data-testid="stCheckbox"] label p {
         color: #f8fafc !important;
         font-weight: 600 !important;
         font-size: clamp(0.82rem, 1.3vw, 0.9rem) !important;
         white-space: nowrap !important;
+        margin: 0 !important;
     }
     /* 다크 배너 위에서 토글 스위치 알약 트랙이 배경에 묻혀 흰색 점만 보이는 현상 방지 */
     div[data-testid="stLayoutWrapper"]:has(.quant-header-banner) [data-testid="stCheckbox"] label > div:nth-of-type(1) {
@@ -118,6 +134,7 @@ DASHBOARD_CSS = """
         flex-wrap: wrap;
         align-items: center;
         gap: 0.5rem;
+        width: 100%;
     }
     .quant-badge {
         display: inline-flex;
@@ -611,20 +628,14 @@ def _render_top_header_and_kpis(
 
     with st.container(border=True):
         st.markdown('<div class="quant-header-banner" style="display:none;"></div>', unsafe_allow_html=True)
-        hcol1, hcol2 = st.columns([0.74, 0.26])
-        with hcol1:
-            header_html = (
-                "<h1>📊 Quant-KO 소형주 성장·가치 자동매매 모니터링 대시보드</h1>"
-                '<div class="quant-badge-container">'
-                f'<span class="quant-badge {mode_badge_cls}">{mode_badge_text}</span>'
-                f'<span class="quant-badge {season_badge_cls}">{season_badge_text}</span>'
-                f'<span class="quant-badge badge-countdown">{rebalance_badge_text}</span>'
-                f'<span class="quant-badge badge-account">계좌: {account_masked}</span>'
-                f'<span class="quant-badge badge-account">데이터 소스: {source_label}</span>'
-                "</div>"
+        # 1행: 타이틀(좌측)과 프라이버시 토글 스위치(우측)를 수평 나란히 일체형 정렬
+        tcol1, tcol2 = st.columns([0.72, 0.28])
+        with tcol1:
+            st.markdown(
+                "<h1>📊 Quant-KO 소형주 성장·가치 자동매매 모니터링 대시보드</h1>",
+                unsafe_allow_html=True,
             )
-            st.markdown(header_html, unsafe_allow_html=True)
-        with hcol2:
+        with tcol2:
             privacy_mode = bool(
                 st.toggle(
                     "🔒 실전 금액 숨기기 (프라이버시)",
@@ -632,6 +643,17 @@ def _render_top_header_and_kpis(
                     help="실전 투자 시 전체 자산 평가액, 예수금, 보유 종목별 매입/평가금액을 '***원'으로 마스킹합니다.",
                 )
             )
+        # 2행: 전폭(100%) 뱃지 행 - 타이틀 아래 전체 너비를 활용하여 뱃지 1줄 정렬 및 화면 잘림 완전 해소
+        badge_html = (
+            '<div class="quant-badge-container">'
+            f'<span class="quant-badge {mode_badge_cls}">{mode_badge_text}</span>'
+            f'<span class="quant-badge {season_badge_cls}">{season_badge_text}</span>'
+            f'<span class="quant-badge badge-countdown">{rebalance_badge_text}</span>'
+            f'<span class="quant-badge badge-account">계좌: {account_masked}</span>'
+            f'<span class="quant-badge badge-account">데이터 소스: {source_label}</span>'
+            "</div>"
+        )
+        st.markdown(badge_html, unsafe_allow_html=True)
 
     col1, col2, col3, col4 = st.columns(4)
     total_eq = float(acc_info.get("total_equity", 0.0))
