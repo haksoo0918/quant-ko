@@ -8,6 +8,10 @@
 ## [1.4.0] - 2026-10-25
 
 ### 추가 및 개선 (Added & Changed)
+- **Streamlit Community Cloud 클라우드 배포 인프라 구축**:
+  - `requirements.txt` 및 `.streamlit/config.toml` 테마/서버 설정 완비.
+  - `app.py` 내 `st.secrets` -> `os.environ` 자동 동기화 브릿지 구현으로 클라우드 콘솔 Secrets를 통한 KIS 실시간 계좌 연동 지원.
+  - 10.5개년 백테스트 시계열 데이터(`data/backtest_10y_series.parquet`, 307KB) git 추적 허용 및 Parquet 파싱 `pyarrow` 의존성 등록.
 - **대시보드 모바일/태블릿 반응형 UI 및 상단 툴바 최적화 (src/quant_ko/dashboard/app.py)**:
   - Streamlit 기본 상단 개발자 툴바(Deploy 버튼 및 메뉴) 완전 은닉(display: none !important) 처리로 상단 여백 확보 및 화면 잘림 결함 원천 차단.
   - 상단 프라이버시 토글 스위치 너비 확장 및 레이블 말줄임 방지, 뷰포트별 가변 여백(clamp()), 타이틀 단어 줄바꿈(keep-all), 뱃지 플렉스 래핑 적용.
