@@ -423,6 +423,9 @@ def test_streamlit_dashboard_full_ui_rendering_audit(
         def success(self, body: str) -> None:
             self.success_messages.append(body)
 
+        def toggle(self, label: str, value: bool = False, **kwargs: Any) -> bool:
+            return value
+
         def error(self, body: str) -> None:
             pass
 
@@ -462,9 +465,9 @@ def test_streamlit_dashboard_full_ui_rendering_audit(
         "🎯 전략 소개 (Strategy Spec)",
         "🔍 최신 타깃 20종목 & 시스템 상태",
     ]
-    # 상단 4개 KPI + Tab 2 주문 4개 KPI + Tab 4 DB 상태 4개 KPI = 총 12개 메트릭
-    assert len(mock_st.metrics) == 12
-    # Tab 1의 3대 Plotly 차트 (Equity Curve, Portfolio Allocation, Backtest Comparison)
+    # 상단 4개 KPI + Tab 1 백테스트 4개 KPI + Tab 2 주문 4개 KPI + Tab 4 DB 상태 4개 KPI = 총 16개 메트릭
+    assert len(mock_st.metrics) == 16
+    # Tab 1의 3대 Plotly 차트 (Equity Curve, Portfolio Allocation, Backtest 10y Trajectory)
     # 및 Tab 4의 팩터 프로파일 차트 지원
     assert len(mock_st.plotly_charts) >= 3
     # 보유 종목 테이블 및 거래기록 테이블 렌더링 검증

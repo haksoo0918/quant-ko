@@ -21,17 +21,18 @@ _src_dir = Path(__file__).resolve().parent.parent.parent
 if str(_src_dir) not in sys.path:
     sys.path.insert(0, str(_src_dir))
 
-import pandas as pd
-import plotly.graph_objects as go
-from plotly.subplots import make_subplots
+import pandas as pd  # noqa: E402
+import plotly.graph_objects as go  # noqa: E402
+from plotly.subplots import make_subplots  # noqa: E402
 
-from quant_ko.dashboard.data_loader import (
+from quant_ko.dashboard.data_loader import (  # noqa: E402
     build_account_equity_curve,
     diagnose_held_positions_risk,
     get_db_status_summary,
     get_next_rebalance_countdown,
     load_account_and_positions,
     load_actual_trade_logs,
+    load_long_term_backtest_series,
     load_top20_preview,
 )
 
@@ -285,6 +286,130 @@ def create_portfolio_allocation_figure(positions_df: pd.DataFrame, cash: float) 
     return fig
 
 
+def create_backtest_10y_trajectory_figure(series_df: pd.DataFrame) -> go.Figure:
+    """10.5개년(2016~2026) 단독 전략의 일별 누적 자산 성장 및 언더워터 낙폭(MDD) 차트를 생성합니다.
+
+    KOSPI 및 KOSDAQ 벤치마크와의 상관관계 및 상대 성과를 한눈에 비교할 수 있습니다.
+    """
+    fig = make_subplots(
+        rows=2,
+        cols=1,
+        shared_xaxes=True,
+        vertical_spacing=0.08,
+        subplot_titles=(
+            "10.5개년 누적 자산 성장 궤적 (초기자본 1,000만 원 기준, 원)",
+            "언더워터 고점 대비 낙폭 (Drawdown %)",
+        ),
+        row_heights=[0.65, 0.35],
+    )
+
+    if series_df.empty:
+        fig.update_layout(
+            height=500,
+            template="plotly_white",
+            annotations=[
+                {
+                    "text": "10.5개년 백테스트 시계열 데이터가 없습니다.",
+                    "xref": "paper",
+                    "yref": "paper",
+                    "x": 0.5,
+                    "y": 0.5,
+                    "showarrow": False,
+                }
+            ],
+        )
+        return fig
+
+    # 1. 상단: 누적 자산 추이
+    # 전략 (계절성)
+    fig.add_trace(
+        go.Scatter(
+            x=series_df["date"],
+            y=series_df["strategy_equity"],
+            mode="lines",
+            name="🔥 소형주 성장·가치 계절성 전략",
+            line={"color": "#0284c7", "width": 3.0},
+            customdata=series_df["strategy_cum_return"],
+            hovertemplate="일자: %{x}<br>총자산: %{y:,.0f}원<br>누적수익률: %{customdata:+.2f}%<extra></extra>",
+        ),
+        row=1,
+        col=1,
+    )
+
+    # KOSPI 벤치마크
+    if "kospi_equity" in series_df.columns:
+        fig.add_trace(
+            go.Scatter(
+                x=series_df["date"],
+                y=series_df["kospi_equity"],
+                mode="lines",
+                name="🏛️ KOSPI 지수 (상관계수 0.34)",
+                line={"color": "#64748b", "width": 1.5, "dash": "dot"},
+                customdata=series_df["kospi_cum_return"],
+                hovertemplate="일자: %{x}<br>KOSPI 평가액: %{y:,.0f}원<br>수익률: %{customdata:+.2f}%<extra></extra>",
+            ),
+            row=1,
+            col=1,
+        )
+
+    # KOSDAQ 벤치마크
+    if "kosdaq_equity" in series_df.columns:
+        fig.add_trace(
+            go.Scatter(
+                x=series_df["date"],
+                y=series_df["kosdaq_equity"],
+                mode="lines",
+                name="📈 KOSDAQ 지수 (상관계수 0.42)",
+                line={"color": "#d97706", "width": 1.5, "dash": "dot"},
+                customdata=series_df["kosdaq_cum_return"],
+                hovertemplate="일자: %{x}<br>KOSDAQ 평가액: %{y:,.0f}원<br>수익률: %{customdata:+.2f}%<extra></extra>",
+            ),
+            row=1,
+            col=1,
+        )
+
+    # 2. 하단: 언더워터 낙폭 (Drawdown %)
+    fig.add_trace(
+        go.Scatter(
+            x=series_df["date"],
+            y=series_df["strategy_dd"],
+            mode="lines",
+            name="전략 낙폭 (MDD -40.1%)",
+            line={"color": "#0284c7", "width": 1.8},
+            fill="tozeroy",
+            fillcolor="rgba(2, 132, 199, 0.15)",
+            hovertemplate="일자: %{x}<br>전략 낙폭: %{y:.2f}%<extra></extra>",
+        ),
+        row=2,
+        col=1,
+    )
+
+    if "kospi_dd" in series_df.columns:
+        fig.add_trace(
+            go.Scatter(
+                x=series_df["date"],
+                y=series_df["kospi_dd"],
+                mode="lines",
+                name="KOSPI 낙폭",
+                line={"color": "#94a3b8", "width": 1.2},
+                hovertemplate="일자: %{x}<br>KOSPI 낙폭: %{y:.2f}%<extra></extra>",
+            ),
+            row=2,
+            col=1,
+        )
+
+    fig.update_layout(
+        height=620,
+        template="plotly_white",
+        hovermode="x unified",
+        legend={"orientation": "h", "yanchor": "bottom", "y": 1.03, "xanchor": "right", "x": 1},
+        margin={"l": 40, "r": 30, "t": 60, "b": 40},
+    )
+    fig.update_yaxes(title_text="자산 평가액 (원)", tickformat=",.0f", row=1, col=1)
+    fig.update_yaxes(title_text="낙폭 (Drawdown %)", range=[-60, 2], row=2, col=1)
+    return fig
+
+
 def create_backtest_comparison_figure() -> go.Figure:
     """10.5개년 백테스트(2016.04~2026.10) 핵심 전략별 성과 비교 인터랙티브 차트를 생성합니다."""
     strategies = [
@@ -362,7 +487,9 @@ def create_backtest_comparison_figure() -> go.Figure:
     return fig
 
 
-def _render_top_header_and_kpis(acc_info: dict[str, Any]) -> None:
+def _render_top_header_and_kpis(
+    acc_info: dict[str, Any], privacy_mode: bool = False
+) -> None:
     """상단 운용 모드 배너 및 4대 핵심 KPI 메트릭 카드를 렌더링합니다."""
     is_mock = bool(acc_info.get("is_mock", True))
     is_parking = bool(acc_info.get("is_parking_season", True))
@@ -390,6 +517,12 @@ def _render_top_header_and_kpis(acc_info: dict[str, Any]) -> None:
         f"⏳ 차기 리밸런싱: {countdown['target_date']} 15:20 ({countdown['formatted_countdown']})"
     )
 
+    privacy_badge = (
+        '<span class="quant-badge" style="background-color:#064e3b; color:#a7f3d0;">🔒 프라이버시 보호 모드 ON</span>'
+        if privacy_mode
+        else ""
+    )
+
     st.markdown(
         f"""
         <div class="quant-banner" role="region" aria-label="Quant-KO 운용 상태 요약 배너">
@@ -402,6 +535,7 @@ def _render_top_header_and_kpis(acc_info: dict[str, Any]) -> None:
                 <span class="quant-badge badge-countdown">{rebalance_badge_text}</span>
                 <span class="quant-badge badge-account">계좌: {account_masked}</span>
                 <span class="quant-badge badge-account">데이터 소스: {source_label}</span>
+                {privacy_badge}
             </div>
         </div>
         """,
@@ -419,19 +553,23 @@ def _render_top_header_and_kpis(acc_info: dict[str, Any]) -> None:
     stock_ratio = (stock_val / total_eq * 100.0) if total_eq > 0 else 0.0
     cash_ratio = (cash_val / total_eq * 100.0) if total_eq > 0 else 0.0
 
+    total_display = "***원" if privacy_mode else f"{total_eq:,.0f}원"
+    stock_display = "***원" if privacy_mode else f"{stock_val:,.0f}원"
+    cash_display = "***원" if privacy_mode else f"{cash_val:,.0f}원"
+
     col1.metric(
         label="💰 총 자산 평가액",
-        value=f"{total_eq:,.0f}원",
+        value=total_display,
         delta=f"{ret_pct:+.2f}% (초기자본 대비)",
     )
     col2.metric(
         label="📈 주식 평가금액",
-        value=f"{stock_val:,.0f}원",
+        value=stock_display,
         delta=f"비중 {stock_ratio:.1f}%",
     )
     col3.metric(
         label="💵 주문가능 예수금",
-        value=f"{cash_val:,.0f}원",
+        value=cash_display,
         delta=f"비중 {cash_ratio:.1f}%",
     )
     col4.metric(
@@ -441,8 +579,10 @@ def _render_top_header_and_kpis(acc_info: dict[str, Any]) -> None:
     )
 
 
-def _render_tab1_equity_and_portfolio(acc_info: dict[str, Any], db_path: str) -> None:
-    """Tab 1: 전체 자산 변화 추이, 보유 포트폴리오, 10.5개년 백테스트 요약."""
+def _render_tab1_equity_and_portfolio(
+    acc_info: dict[str, Any], db_path: str, privacy_mode: bool = False
+) -> None:
+    """Tab 1: 전체 자산 변화 추이, 보유 포트폴리오, 10.5개년 단독 전략 시계열 및 벤치마크 비교."""
     st.subheader("1️⃣ 실제 계좌 전체 자산 변화 추이 (Total Equity Trajectory)")
     equity_df = build_account_equity_curve(db_path=db_path)
     fig_eq = create_equity_curve_figure(equity_df)
@@ -463,11 +603,21 @@ def _render_tab1_equity_and_portfolio(acc_info: dict[str, Any], db_path: str) ->
             {
                 "종목코드": positions_df["ticker"],
                 "종목명": positions_df["name"],
-                "보유수량": positions_df["qty"].map(lambda x: f"{int(x):,}주"),
-                "평균매입가": positions_df["avg_price"].map(lambda x: f"{int(x):,}원"),
-                "현재가": positions_df["current_price"].map(lambda x: f"{int(x):,}원"),
-                "평가금액": positions_df["eval_amount"].map(lambda x: f"{int(x):,}원"),
-                "수익률(%)": positions_df["return_pct"].map(lambda x: f"{float(x):+.2f}%"),
+                "보유수량": positions_df["qty"].map(
+                    lambda x: "***주" if privacy_mode else f"{int(x):,}주"
+                ),
+                "평균매입가": positions_df["avg_price"].map(
+                    lambda x: "***원" if privacy_mode else f"{int(x):,}원"
+                ),
+                "현재가": positions_df["current_price"].map(
+                    lambda x: f"{int(x):,}원"
+                ),
+                "평가금액": positions_df["eval_amount"].map(
+                    lambda x: "***원" if privacy_mode else f"{int(x):,}원"
+                ),
+                "수익률(%)": positions_df["return_pct"].map(
+                    lambda x: f"{float(x):+.2f}%"
+                ),
                 "포트폴리오 비중(%)": positions_df["weight_pct"].map(
                     lambda x: f"{float(x):.2f}%"
                 ),
@@ -501,25 +651,42 @@ def _render_tab1_equity_and_portfolio(acc_info: dict[str, Any], db_path: str) ->
                 )
 
     st.divider()
-    st.subheader("3️⃣ 10.5개년 백테스트 누적 자산 성장 비교 요약 (2016.04 ~ 2026.10)")
+    st.subheader("3️⃣ 10.5개년 단독 전략 시계열 및 벤치마크 비교 (2016.04 ~ 2026.10)")
     st.markdown(
         """
-        - **Order B 계절성 (현행 채택, 재무필터 후 시총 하위 20% 후절삭)**: 누적 수익률 **+275.34%** · CAGR **13.40%** · MDD **-41.23%** · 연승률 **90.9% (10승 1패)**
-        - **Order A 선절삭 계절성 (시총 하위 20% 선절삭 후 재무필터)**: 누적 수익률 **+278.80%** · CAGR **13.50%** · MDD **-40.08%** · 연승률 **81.8% (9승 2패)**
-        - **상시보유 (모의투자 검증용, 5~10월 파킹 미적용)**: 누적 수익률 **+127.23%** · CAGR **8.12%** · MDD **-55.40%**
+        > 💡 **전략 단독 10.5년 실제 궤적**: 압축 요약이 아닌 **2016년 4월부터 2026년 10월까지 2,579영업일 동안 매일매일 어떻게 자산이 움직였는지**를
+        > 일별 시계열 차트 및 언더워터 낙폭(MDD) 곡선으로 온전히 보여줍니다.
+        > 시장 대표 지표인 **KOSPI 지수** 및 **KOSDAQ 지수**와 상관계수(Correlation) 및 연도별 수익률을 정밀 비교합니다.
         """
     )
-    fig_bt = create_backtest_comparison_figure()
-    st.plotly_chart(fig_bt, use_container_width=True)
 
-    chart_img_path = Path("docs/charts/backtest_comparison_chart.png")
-    if chart_img_path.exists():
-        with st.expander("🖼️ 10.5개년 백테스트 고해상도 상세 차트 보기 (docs/charts/backtest_comparison_chart.png)"):
-            st.image(
-                str(chart_img_path),
-                caption="소형주 퀀트 전략 vs KOSPI / KOSDAQ 10.5개년 누적 수익률 · 낙폭 · 연도별 수익률 비교",
-                use_container_width=True,
-            )
+    bt_data = load_long_term_backtest_series()
+    series_df = bt_data.get("series_df", pd.DataFrame())
+
+    if not series_df.empty:
+        # 1. 핵심 성과 지표 & 상관계수 4대 카드
+        bcol1, bcol2, bcol3, bcol4 = st.columns(4)
+        bcol1.metric("누적 수익률 (전략 10.5년)", f"+{bt_data['total_return_strategy']:.2f}%", "초기 1,000만 ➔ 5,161만 원")
+        bcol2.metric("연평균 복리수익률 (CAGR)", f"{bt_data['cagr_strategy']:.2f}%", f"MDD {bt_data['mdd_strategy']:.2f}%")
+        bcol3.metric("KOSPI 상관계수", f"{bt_data['corr_kospi']:.4f}", "낮은 상관관계 (시장 독립성)")
+        bcol4.metric("KOSDAQ 상관계수", f"{bt_data['corr_kosdaq']:.4f}", "소형주 시장 적정 동조화")
+
+        # 2. 10.5개년 일별 누적 자산 성장 및 언더워터 낙폭 인터랙티브 차트
+        fig_10y = create_backtest_10y_trajectory_figure(series_df)
+        st.plotly_chart(fig_10y, use_container_width=True)
+
+        # 3. 연도별 수익률 및 KOSPI 대비 초과수익률 비교 테이블
+        yearly_df = bt_data.get("yearly_df", pd.DataFrame())
+        if not yearly_df.empty:
+            st.markdown("#### 📅 10.5개년 연도별 수익률 및 KOSPI 대비 초과 성과")
+            styled_yearly = yearly_df.copy()
+            styled_yearly["전략(소형주+계절성)"] = styled_yearly["전략(소형주+계절성)"].map(lambda v: f"{v:+.2f}%")
+            styled_yearly["KOSPI 지수"] = styled_yearly["KOSPI 지수"].map(lambda v: f"{v:+.2f}%")
+            styled_yearly["KOSDAQ 지수"] = styled_yearly["KOSDAQ 지수"].map(lambda v: f"{v:+.2f}%")
+            styled_yearly["KOSPI 대비 초과수익"] = styled_yearly["KOSPI 대비 초과수익"].map(lambda v: f"{v:+.2f}%p")
+            st.dataframe(styled_yearly, use_container_width=True, hide_index=True)
+    else:
+        st.info("10.5개년 백테스트 시계열 데이터가 준비되지 않았습니다.")
 
 
 def _render_tab2_trade_logs(db_path: str) -> None:
@@ -765,8 +932,17 @@ def main(db_path: str = "data/quant_ko.db") -> None:
     )
     st.markdown(DASHBOARD_CSS, unsafe_allow_html=True)
 
+    # 상단 우측 실전 계좌 금액 마스킹 프라이버시 토글 스위치
+    pcol1, pcol2 = st.columns([0.78, 0.22])
+    with pcol2:
+        privacy_mode = st.toggle(
+            "🔒 실전 금액 숨기기 (프라이버시 모드)",
+            value=False,
+            help="실전 투자 시 전체 자산 평가액, 예수금, 보유 종목별 매입/평가금액을 '***원'으로 마스킹합니다.",
+        )
+
     acc_info = load_account_and_positions(db_path=db_path, fetch_live_kis=True)
-    _render_top_header_and_kpis(acc_info)
+    _render_top_header_and_kpis(acc_info, privacy_mode=privacy_mode)
 
     tab1, tab2, tab3, tab4 = st.tabs(
         [
@@ -778,7 +954,7 @@ def main(db_path: str = "data/quant_ko.db") -> None:
     )
 
     with tab1:
-        _render_tab1_equity_and_portfolio(acc_info, db_path=db_path)
+        _render_tab1_equity_and_portfolio(acc_info, db_path=db_path, privacy_mode=privacy_mode)
     with tab2:
         _render_tab2_trade_logs(db_path=db_path)
     with tab3:
