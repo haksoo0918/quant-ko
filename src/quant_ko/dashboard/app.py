@@ -55,34 +55,80 @@ DASHBOARD_CSS = """
         --accent-amber: #f59e0b;
         --accent-red: #ef4444;
     }
+    .block-container {
+        padding-top: 1.8rem !important;
+        padding-bottom: 3rem !important;
+        padding-left: clamp(1rem, 3vw, 2.5rem) !important;
+        padding-right: clamp(1rem, 3vw, 2.5rem) !important;
+        max-width: 1400px;
+    }
     .quant-banner {
         background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
         border: 1px solid #334155;
         border-radius: 12px;
-        padding: 1.25rem 1.5rem;
+        padding: clamp(1rem, 2vw, 1.35rem);
         margin-bottom: 1.25rem;
         color: #f8fafc;
     }
+    .quant-banner h1 {
+        margin: 0 0 0.75rem 0;
+        font-size: clamp(1.1rem, 3vw, 1.65rem) !important;
+        color: #f8fafc;
+        line-height: 1.35;
+        word-break: keep-all;
+    }
+    .quant-badge-container {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 0.5rem;
+    }
     .quant-badge {
-        display: inline-block;
-        padding: 0.3rem 0.75rem;
+        display: inline-flex;
+        align-items: center;
+        padding: 0.28rem 0.65rem;
         border-radius: 9999px;
-        font-size: 0.85rem;
+        font-size: clamp(0.75rem, 1.5vw, 0.85rem);
         font-weight: 600;
-        margin-right: 0.5rem;
         border: 1px solid rgba(255, 255, 255, 0.18);
+        white-space: nowrap;
     }
     .badge-mock { background-color: #1e3a8a; color: #93c5fd; }
     .badge-real { background-color: #065f46; color: #6ee7b7; }
     .badge-parking { background-color: #78350f; color: #fde68a; }
     .badge-active { background-color: #14532d; color: #86efac; }
     .badge-account { background-color: #334155; color: #f1f5f9; font-family: monospace; }
+    .badge-countdown {
+        background-color: #4338ca;
+        color: #c7d2fe;
+        font-weight: 700;
+    }
+    [data-testid="stMetric"] {
+        background-color: #f8fafc;
+        border: 1px solid #e2e8f0;
+        border-radius: 10px;
+        padding: 0.75rem 1rem !important;
+        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+    }
+    [data-testid="stMetricLabel"] {
+        font-size: clamp(0.78rem, 1.2vw, 0.9rem) !important;
+        font-weight: 600;
+        color: #475569 !important;
+    }
+    [data-testid="stMetricValue"] {
+        font-size: clamp(1.2rem, 2vw, 1.6rem) !important;
+        font-weight: 700 !important;
+        color: #0f172a !important;
+    }
+    [data-testid="stMetricDelta"] {
+        font-size: clamp(0.75rem, 1.1vw, 0.85rem) !important;
+    }
     .rule-card {
         background-color: #f8fafc;
         border: 1px solid #cbd5e1;
         border-left: 5px solid #0284c7;
         border-radius: 8px;
-        padding: 1.1rem 1.25rem;
+        padding: clamp(0.85rem, 1.5vw, 1.25rem);
         margin-bottom: 1rem;
         color: #0f172a;
         line-height: 1.6;
@@ -90,48 +136,46 @@ DASHBOARD_CSS = """
     .rule-card h3 {
         margin-top: 0;
         color: #0f172a;
-        font-size: 1.15rem;
+        font-size: clamp(1rem, 1.8vw, 1.15rem);
     }
     .formula-box {
         background-color: #0f172a;
         color: #38bdf8;
         font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-        padding: 0.9rem 1.2rem;
+        padding: 0.8rem 1rem;
         border-radius: 8px;
         border: 1px solid #334155;
-        font-size: 0.95rem;
+        font-size: clamp(0.8rem, 1.4vw, 0.95rem);
         margin: 0.75rem 0;
+        overflow-x: auto;
     }
-    .badge-countdown {
-        background-color: #4338ca;
-        color: #c7d2fe;
-        font-weight: 700;
+    .risk-card-normal, .risk-card-warning, .risk-card-danger {
+        display: flex;
+        flex-wrap: wrap;
+        justify-content: space-between;
+        align-items: center;
+        gap: 0.5rem;
+        border-radius: 6px;
+        padding: 0.65rem 0.9rem;
+        margin-bottom: 0.5rem;
+        font-size: clamp(0.8rem, 1.2vw, 0.9rem);
     }
     .risk-card-normal {
         background-color: #f0fdf4;
         border: 1px solid #bbf7d0;
         border-left: 4px solid #16a34a;
-        border-radius: 6px;
-        padding: 0.75rem 1rem;
-        margin-bottom: 0.5rem;
         color: #14532d;
     }
     .risk-card-warning {
         background-color: #fffbeb;
         border: 1px solid #fde68a;
         border-left: 4px solid #f59e0b;
-        border-radius: 6px;
-        padding: 0.75rem 1rem;
-        margin-bottom: 0.5rem;
         color: #78350f;
     }
     .risk-card-danger {
         background-color: #fef2f2;
         border: 1px solid #fecaca;
         border-left: 4px solid #dc2626;
-        border-radius: 6px;
-        padding: 0.75rem 1rem;
-        margin-bottom: 0.5rem;
         color: #7f1d1d;
     }
 </style>
@@ -525,9 +569,8 @@ def _render_top_header_and_kpis(
 
     banner_html = (
         '<div class="quant-banner" role="region" aria-label="Quant-KO 운용 상태 요약 배너">'
-        '<h1 style="margin:0 0 0.6rem 0; font-size:1.65rem; color:#f8fafc;">'
-        "📊 Quant-KO 소형주 성장·가치 자동매매 모니터링 대시보드</h1>"
-        "<div>"
+        "<h1>📊 Quant-KO 소형주 성장·가치 자동매매 모니터링 대시보드</h1>"
+        '<div class="quant-badge-container">'
         f'<span class="quant-badge {mode_badge_cls}">{mode_badge_text}</span>'
         f'<span class="quant-badge {season_badge_cls}">{season_badge_text}</span>'
         f'<span class="quant-badge badge-countdown">{rebalance_badge_text}</span>'
@@ -639,8 +682,8 @@ def _render_tab1_equity_and_portfolio(
                 st.markdown(
                     f"""
                     <div class="{cls_name}">
-                        <strong>{diag['name']} ({diag['ticker']})</strong>: {diag['issues']}
-                        <span style="float:right; font-size:0.85rem;">부채비율: {diag['debt_ratio']:.1f}% | 자본잠식률: {diag['impairment_ratio']:.1f}%</span>
+                        <span><strong>{diag['name']} ({diag['ticker']})</strong>: {diag['issues']}</span>
+                        <span style="font-size:0.82rem; opacity:0.9;">부채비율: {diag['debt_ratio']:.1f}% | 자본잠식률: {diag['impairment_ratio']:.1f}%</span>
                     </div>
                     """,
                     unsafe_allow_html=True,
