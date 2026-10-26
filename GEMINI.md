@@ -49,4 +49,8 @@ Before taking actions in specific domains, always consult the specialized guidel
     - **`dev` 브랜치**: 로컬 커밋은 자율적으로 수행하되, 원격(`origin/dev`) 푸시는 엄격히 금지합니다.
     - **`main` 브랜치**: `main`으로의 머지 및 원격(`origin/main`) 푸시/동기화는 반드시 사용자의 명시적 승인을 득한 후 실행합니다.
     - **훅 우회 절대 금지**: 에이전트는 어떠한 경우에도 `.git/ALLOW_*` 토큰 파일을 임의 생성하거나 `--no-verify`로 Git 훅을 우회해서는 안 됩니다. 모든 승인은 인간 사용자가 직접 콘솔에서 수행해야 합니다.
+14. **Tilde (`\~`) Escaping & Strikethrough Prevention**: When expressing ranges, dates, or intervals in chat responses, modal questions (`ask_question`), artifacts, and markdown documents, prefer hyphens (e.g. `11 - 4월`) or strictly escape tildes with backslashes (`\~`, e.g. `11\~4월`) to prevent markdown engines from rendering unintended strikethroughs.
+15. **Mandatory Space After Korean Emphasis**: In Korean text, whenever closing emphasis (`**bold**` or `*italic*`) is followed by Korean characters or postpositions (조사: 을/를, 이/가, 은/는, 의, 에 등), always insert a space (e.g. `**규칙** 을` ⭕, `**규칙**을` ❌) across all chat responses, modal questions, artifacts, and documentation to prevent Markdown rendering glitches.
+
+
 
