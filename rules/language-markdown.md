@@ -30,7 +30,7 @@ This document establishes the communication, formatting, and documentation guide
 4. **Mandatory Space After Emphasis in Korean**: In Korean text, whenever emphasis (`**bold**` or `*italic*`) is followed by Korean characters/postpositions without whitespace, always insert a space (e.g. `** 강조** 문구` ❌ ➔ `** 강조** 문구` ⭕) to prevent Markdown parser and bold rendering glitches.
    - **Regardless of Internal Content**: Regardless of what symbols reside inside the emphasis tags (inline code backticks, parentheses, hyphens, glob wildcards), **a space is mandatory whenever the closing emphasis mark is followed by a Korean character** (e.g. `** 번역본(`*-ko.md`)** 을` ❌ ➔ `** 번역본(`*-ko.md`)** 을` ⭕).
    - **Verification Pattern**: Validated via `(?<=\S)\*\*(?=[가-힣])` to ensure zero attached Korean particles after closing bold markers.
-5. **Tilde (`\~`) Strikethrough Prevention**: When writing ranges or intervals, prefer hyphens (e.g. `2023 - 2024`) or strictly escape tildes with backslashes (`\~`, e.g. `2023\~2024`) to prevent Markdown engines from erroneously parsing them as strikethrough markup (`~~strike~~`).
+5. **Tilde (`\~`) Strikethrough Prevention**: Across all communication surfaces—including in-chat responses, `ask_question` tool parameters, sidecar artifacts, source code docstrings, and repository markdown files—never use unescaped tildes (`~`) for ranges or intervals. Prefer hyphens (e.g. `2023 - 2024`, `11 - 4월`) or strictly escape tildes with backslashes (`\~`, e.g. `2023\~2024`, `11\~4월`) to prevent Markdown engines from erroneously parsing them as strikethrough markup (`~~strike~~`).
 
 ---
 
