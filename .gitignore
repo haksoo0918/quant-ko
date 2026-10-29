@@ -61,6 +61,7 @@ data/*.json
 data/*.csv
 data/*.parquet
 !data/backtest_10y_series.parquet
+!data/oci_db_patch.json.gz
 data/raw/
 data/cache/
 

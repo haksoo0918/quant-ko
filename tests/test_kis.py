@@ -471,3 +471,13 @@ def test_kis_fetch_current_price_caches_upper_limit(kis_client):
         assert price == 10000.0
         assert kis_client.get_upper_limit("005930") == 13000
         assert kis_client.get_upper_limit("999999") is None
+
+
+def test_kis_token_cache_file_uses_absolute_project_path():
+    """KisClient 생성 시 token_cache_file이 상대경로가 아닌 프로젝트 루트 기준 절대경로로 설정되는지 검증."""
+    from pathlib import Path
+
+    client = KisClient("key", "secret", "12345678-01", is_mock=False)
+    assert isinstance(client.token_cache_file, str)
+    assert Path(client.token_cache_file).is_absolute()
+    assert client.token_cache_file.endswith("kis_token_real.json")
