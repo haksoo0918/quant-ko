@@ -18,10 +18,22 @@ PARKING_MONTHS = {5, 6, 7, 8, 9, 10}
 
 
 def is_seasonality_parking_period(date_str: str) -> bool:
-    """5~10월 안전 자산(CD금리 ETF) 대피 구간 여부 판정."""
+    """5~10월 안전 자산(CD금리 ETF) 대피 구간 여부 판정.
+
+    월말 리밸런싱 경계 기준:
+    - 10월 말 리밸런싱(10월 25일 이상, 예: 2026-10-29 D-1일 및 2026-10-30 리밸런싱일)은
+      11~4월 소형주 20종목 활성 투자 구간으로 진입하므로 False를 반환합니다.
+    - 4월 말 리밸런싱(4월 25일 이상, 예: 2026-04-30 리밸런싱일)은
+      5~10월 CD금리 ETF 안전 파킹 구간으로 진입하므로 True를 반환합니다.
+    - 5~9월 및 10월 25일 미만은 파킹 구간(True), 11~3월 및 4월 25일 미만(예: 2026-04-01)은 활성 구간(False)입니다.
+    """
     from datetime import datetime
 
     dt = datetime.strptime(normalize_date(date_str), "%Y-%m-%d")
+    if dt.month == 10 and dt.day >= 25:
+        return False
+    if dt.month == 4 and dt.day >= 25:
+        return True
     return dt.month in PARKING_MONTHS
 
 

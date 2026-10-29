@@ -356,3 +356,118 @@ def test_kis_request_auto_recovers_on_egw00123_error_code(kis_client):
         assert mock_get.call_count == 2
         mock_token_post.assert_called_once()
 
+
+
+def test_krx_tick_size_and_buy_limit_price():
+    """KRX 호가 단위 및 +5% 상한 지정가 산출 헬퍼 함수 검증."""
+    from quant_ko.broker.kis import (
+        calc_buy_limit_price,
+        get_krx_tick_size,
+        round_to_krx_tick,
+    )
+
+    # 일반 주식 호가 단위
+    assert get_krx_tick_size(1500) == 1
+    assert get_krx_tick_size(3500) == 5
+    assert get_krx_tick_size(12000) == 10
+    assert get_krx_tick_size(35000) == 50
+    assert get_krx_tick_size(120000) == 100
+    assert get_krx_tick_size(350000) == 500
+    assert get_krx_tick_size(600000) == 1000
+
+    # ETF 호가 단위 (2,000원 이상 5원, 미만 1원)
+    assert get_krx_tick_size(53000, is_etf=True) == 5
+    assert get_krx_tick_size(1500, is_etf=True) == 1
+
+    # 호가 반올림/내림/올림
+    assert round_to_krx_tick(12345, is_etf=False, mode="floor") == 12340.0
+    assert round_to_krx_tick(12345, is_etf=False, mode="ceil") == 12350.0
+    assert round_to_krx_tick(53123, is_etf=True, mode="floor") == 53120.0
+
+    # +5% 지정가 산출 (상한가 캡 포함)
+    # 10,000 * 1.05 = 10,500 (틱 10원)
+    assert calc_buy_limit_price(10000, buffer_pct=0.05) == 10500.0
+    # 21,350 * 1.05 = 22,417.5 -> 20,000~50,000 구간이므로 50원 단위 내림 -> 22,400
+    assert calc_buy_limit_price(21350, buffer_pct=0.05) == 22400.0
+    # 상한가 캡이 더 낮을 경우 상한가로 제한
+    assert calc_buy_limit_price(10000, buffer_pct=0.05, upper_limit=10300.0) == 10300.0
+
+
+def test_kis_request_retries_on_egw00201_rate_limit(kis_client):
+    """200 OK 응답이더라도 본문에 EGW00201(초당 거래건수 초과)이 오면 대기 후 재시도하는지 검증."""
+    kis_client._access_token = "valid_token"
+    kis_client._token_expires_at = 9999999999.0
+
+    resp_rate_limit = MagicMock()
+    resp_rate_limit.status_code = 200
+    resp_rate_limit.json.return_value = {
+        "rt_cd": "1",
+        "msg_cd": "EGW00201",
+        "msg1": "초당 거래건수를 초과하였습니다.",
+    }
+
+    resp_ok = MagicMock()
+    resp_ok.status_code = 200
+    resp_ok.json.return_value = {
+        "rt_cd": "0",
+        "msg_cd": "MCA00000",
+        "output": {"stck_prpr": "12300"},
+    }
+
+    with (
+        patch.object(
+            kis_client.session, "get", side_effect=[resp_rate_limit, resp_ok]
+        ) as mock_get,
+        patch("time.sleep") as mock_sleep,
+    ):
+        price = kis_client.fetch_current_price("005930")
+        assert price == 12300.0
+        assert mock_get.call_count == 2
+        mock_sleep.assert_called_once()
+
+
+def test_kis_fetch_balance_uses_prvs_rcdl_excc_amt_when_present(kis_client):
+    """실전 계좌처럼 dnca_tot_amt가 0이고 prvs_rcdl_excc_amt(D+2 가수도정산금액)가 양수일 때 이를 예수금으로 사용하는지 검증."""
+    kis_client._access_token = "cached_token"
+    kis_client._token_expires_at = 9999999999.0
+
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.json.return_value = {
+        "rt_cd": "0",
+        "output1": [],
+        "output2": [
+            {
+                "dnca_tot_amt": "0",
+                "prvs_rcdl_excc_amt": "1950000",
+                "tot_evlu_amt": "1950000",
+            }
+        ],
+    }
+
+    with patch.object(kis_client.session, "get", return_value=mock_resp):
+        balance = kis_client.fetch_balance()
+        assert balance.cash == 1950000.0
+
+
+def test_kis_fetch_current_price_caches_upper_limit(kis_client):
+    """fetch_current_price 호출 시 응답의 stck_mxpr(상한가)를 캐싱하고 get_upper_limit으로 조회할 수 있는지 검증."""
+    kis_client._access_token = "cached_token"
+    kis_client._token_expires_at = 9999999999.0
+
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.json.return_value = {
+        "rt_cd": "0",
+        "msg_cd": "MCA00000",
+        "output": {
+            "stck_prpr": "10000",
+            "stck_mxpr": "13000",
+        },
+    }
+
+    with patch.object(kis_client.session, "get", return_value=mock_resp):
+        price = kis_client.fetch_current_price("005930")
+        assert price == 10000.0
+        assert kis_client.get_upper_limit("005930") == 13000
+        assert kis_client.get_upper_limit("999999") is None

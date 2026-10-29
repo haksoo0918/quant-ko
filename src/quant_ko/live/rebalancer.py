@@ -6,7 +6,7 @@ import time
 from typing import Any, TypedDict
 
 from quant_ko.backtest.calendar import get_rebalance_schedule
-from quant_ko.broker.kis import KisClient
+from quant_ko.broker.kis import KisClient, calc_buy_limit_price
 from quant_ko.data.krx import normalize_date
 from quant_ko.data.store import DataStore
 from quant_ko.notify.discord import DiscordNotifier
@@ -17,6 +17,68 @@ logger = logging.getLogger(__name__)
 
 
 CD_ETF_TICKER = "357870"  # TIGER CD금리투자KIS(합성) - 1주당 약 53,000원으로 소액 시드 단주 최소화
+
+# 한국 고정 공휴일 및 KRX 연말 휴장일 (MM-DD)
+KRX_FIXED_HOLIDAYS = {
+    "01-01",  # 신정
+    "03-01",  # 삼일절
+    "05-05",  # 어린이날
+    "06-06",  # 현충일
+    "08-15",  # 광복절
+    "10-03",  # 개천절
+    "10-09",  # 한글날
+    "12-25",  # 성탄절
+    "12-31",  # KRX 연말 휴장일
+}
+
+
+def _generate_month_weekdays(year: int, month: int) -> list[str]:
+    """해당 연월의 평일(월~금, 고정 공휴일 및 연말 휴장일 제외) 거래일 목록을 생성합니다."""
+    import calendar
+    from datetime import date
+
+    _, num_days = calendar.monthrange(year, month)
+    days: list[str] = []
+    for day in range(1, num_days + 1):
+        d = date(year, month, day)
+        if d.weekday() < 5:  # 월(0) ~ 금(4)
+            mm_dd = f"{month:02d}-{day:02d}"
+            if mm_dd not in KRX_FIXED_HOLIDAYS:
+                days.append(d.strftime("%Y-%m-%d"))
+    return days
+
+
+def get_augmented_trading_days(base_trading_days: list[str], target_date: str) -> list[str]:
+    """실전 운용 시 DB 거래일 목록에 대상 월 및 익월의 평일 거래일을 보강하여 반환합니다.
+
+    DB의 daily_prices에 과거 시세만 존재하더라도 당월 말 리밸런싱일 및 D-1일을
+    정확히 판별할 수 있도록, 대상 월의 마지막 평일이 아직 포함되지 않은 경우
+    대상 월과 익월의 평일 달력을 병합합니다.
+    """
+    from datetime import datetime
+
+    norm_target = normalize_date(target_date)
+    dt = datetime.strptime(norm_target, "%Y-%m-%d")
+    year, month = dt.year, dt.month
+
+    existing_set = {normalize_date(d) for d in base_trading_days} if base_trading_days else set()
+    target_month_weekdays = _generate_month_weekdays(year, month)
+    if not target_month_weekdays:
+        return sorted(existing_set)
+
+    last_weekday_of_month = target_month_weekdays[-1]
+    month_prefix = f"{year:04d}-{month:02d}-"
+    existing_in_month = [d for d in existing_set if d.startswith(month_prefix)]
+    max_in_month = max(existing_in_month) if existing_in_month else ""
+
+    if max_in_month < last_weekday_of_month:
+        next_year = year + 1 if month == 12 else year
+        next_month = 1 if month == 12 else month + 1
+        next_month_weekdays = _generate_month_weekdays(next_year, next_month)
+        existing_set.update(target_month_weekdays)
+        existing_set.update(next_month_weekdays)
+
+    return sorted(existing_set)
 
 
 class ExecutedOrderSummary(TypedDict):
@@ -97,6 +159,7 @@ class LiveRebalancer:
         cd_etf_ticker: str = CD_ETF_TICKER,
         cost_rate: float = 0.003,
         order_type: str = "01",
+        buy_buffer_pct: float = 0.05,
     ) -> None:
         self.store = store
         self.kis_client = kis_client
@@ -107,18 +170,20 @@ class LiveRebalancer:
         self.cd_etf_ticker = cd_etf_ticker
         self.cost_rate = cost_rate
         self.order_type = order_type
+        self.buy_buffer_pct = buy_buffer_pct
 
     def is_rebalance_date(self, date: str, trading_days: list[str]) -> bool:
         """Check if given date matches scheduled rebalancing date."""
         norm = normalize_date(date)
-        schedule = get_rebalance_schedule(trading_days, rebalance_freq=self.rebalance_freq)
+        aug_days = get_augmented_trading_days(trading_days, norm)
+        schedule = get_rebalance_schedule(aug_days, rebalance_freq=self.rebalance_freq)
         reb_dates = {e.rebalance_date for e in schedule}
         return norm in reb_dates
 
     def is_d_minus_one(self, date: str, trading_days: list[str]) -> bool:
         """Check if given date is D-1 (the trading day immediately preceding rebalance date)."""
         norm = normalize_date(date)
-        sorted_days = sorted({normalize_date(d) for d in trading_days})
+        sorted_days = get_augmented_trading_days(trading_days, norm)
         if norm not in sorted_days:
             return False
         idx = sorted_days.index(norm)
@@ -139,7 +204,7 @@ class LiveRebalancer:
         norm_date = normalize_date(as_of_date)
         if not trading_days:
             trading_days = self.store.get_trading_days()
-        sorted_days = sorted({normalize_date(d) for d in trading_days})
+        sorted_days = get_augmented_trading_days(trading_days, norm_date)
 
         target_reb_date = norm_date
         if norm_date in sorted_days:
@@ -259,7 +324,7 @@ class LiveRebalancer:
         norm = normalize_date(date)
         if not trading_days:
             trading_days = self.store.get_trading_days()
-        sorted_days = sorted({normalize_date(d) for d in trading_days})
+        sorted_days = get_augmented_trading_days(trading_days, norm)
         prior_days = [d for d in sorted_days if d < norm]
         if prior_days:
             return prior_days[-1]
@@ -357,6 +422,8 @@ class LiveRebalancer:
             price = 0.0
             try:
                 price = self.kis_client.fetch_current_price(ticker)
+                if type(self.kis_client).__name__ != "MagicMock":
+                    time.sleep(0.12)
             except Exception:
                 pass
 
@@ -375,7 +442,7 @@ class LiveRebalancer:
             held_positions.get(t, 0) * prices.get(t, 0.0) for t in held_positions
         )
 
-        # Calculate desired shares (with cost buffer)
+        # Calculate desired shares (with +5% limit margin and cost buffer)
         desired_target_shares: dict[str, int] = {}
         for ticker, weight in target_weights.items():
             price = prices.get(ticker, 0.0)
@@ -384,7 +451,21 @@ class LiveRebalancer:
                     "종목 %s의 유효 가격이 없어(0원 이하) 매수 대상에서 제외합니다.", ticker
                 )
                 continue
-            cost_per_share = price * (1.0 + self.cost_rate)
+            effective_buy_price = (
+                calc_buy_limit_price(
+                    price,
+                    buffer_pct=self.buy_buffer_pct,
+                    is_etf=(ticker == self.cd_etf_ticker),
+                    upper_limit=(
+                        self.kis_client.get_upper_limit(ticker)
+                        if hasattr(self.kis_client, "get_upper_limit")
+                        else None
+                    ),
+                )
+                if self.buy_buffer_pct > 0
+                else price
+            )
+            cost_per_share = effective_buy_price * (1.0 + self.cost_rate)
             target_val = total_equity * weight
             target_shares = math.floor(target_val / cost_per_share)
             if target_shares > 0:
@@ -489,7 +570,22 @@ class LiveRebalancer:
             if price <= 0:
                 continue
             name = get_stock_name(ticker)
-            cost_per_share = price * (1.0 + self.cost_rate)
+            buy_order_price = (
+                calc_buy_limit_price(
+                    price,
+                    buffer_pct=self.buy_buffer_pct,
+                    is_etf=(ticker == self.cd_etf_ticker),
+                    upper_limit=(
+                        self.kis_client.get_upper_limit(ticker)
+                        if hasattr(self.kis_client, "get_upper_limit")
+                        else None
+                    ),
+                )
+                if self.buy_buffer_pct > 0
+                else price
+            )
+            buy_order_type = "00" if self.buy_buffer_pct > 0 else self.order_type
+            cost_per_share = buy_order_price * (1.0 + self.cost_rate)
             max_buyable = math.floor(available_cash / cost_per_share) if cost_per_share > 0 else 0
             buy_qty = min(qty, max_buyable)
             if buy_qty <= 0:
@@ -521,9 +617,26 @@ class LiveRebalancer:
                         ticker=ticker,
                         side="BUY",
                         qty=buy_qty,
-                        price=price,
-                        order_type=self.order_type,
+                        price=buy_order_price,
+                        order_type=buy_order_type,
                     )
+                    if not res.success and buy_qty > 1:
+                        logger.warning(
+                            "BUY order rejected for %s (qty=%d, msg=%s). Retrying with qty=%d...",
+                            ticker,
+                            buy_qty,
+                            res.message,
+                            buy_qty - 1,
+                        )
+                        buy_qty -= 1
+                        amount = buy_qty * price
+                        res = self.kis_client.place_order(
+                            ticker=ticker,
+                            side="BUY",
+                            qty=buy_qty,
+                            price=buy_order_price,
+                            order_type=buy_order_type,
+                        )
                     res_success = res.success
                     order_no = res.order_no
                     msg = res.message or ("정상 체결" if res.success else "주문 실패")

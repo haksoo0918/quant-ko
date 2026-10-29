@@ -14,6 +14,54 @@ MOCK_BASE_URL = "https://openapivts.koreainvestment.com:29443"
 REAL_BASE_URL = "https://openapi.koreainvestment.com:9443"
 
 
+def get_krx_tick_size(price: float, is_etf: bool = False) -> int:
+    """KRX 호가 단위를 반환합니다 (일반 주식 통합 호가 단위 및 ETF 호가 단위 적용)."""
+    if is_etf:
+        return 5 if price >= 2000 else 1
+    if price < 2000:
+        return 1
+    if price < 5000:
+        return 5
+    if price < 20000:
+        return 10
+    if price < 50000:
+        return 50
+    if price < 200000:
+        return 100
+    if price < 500000:
+        return 500
+    return 1000
+
+
+def round_to_krx_tick(price: float, is_etf: bool = False, mode: str = "floor") -> float:
+    """주어진 가격을 KRX 호가 단위에 맞춰 내림(floor), 올림(ceil), 반올림(round)합니다."""
+    import math
+
+    if price <= 0:
+        return 0.0
+    tick = get_krx_tick_size(price, is_etf=is_etf)
+    if mode == "ceil":
+        return float(math.ceil(price / tick) * tick)
+    if mode == "round":
+        return float(round(price / tick) * tick)
+    return float(math.floor(price / tick) * tick)
+
+
+def calc_buy_limit_price(
+    current_price: float,
+    buffer_pct: float = 0.05,
+    is_etf: bool = False,
+    upper_limit: float | None = None,
+) -> float:
+    """장마감 동시호가(15:20) 매수 체결 보장 및 상한가(+30%) 증거금 잠김 방지를 위한 지정가를 산출합니다."""
+    if current_price <= 0:
+        return 0.0
+    raw_target = current_price * (1.0 + buffer_pct)
+    if isinstance(upper_limit, (int, float)) and upper_limit > 0:
+        raw_target = min(raw_target, float(upper_limit))
+    return round_to_krx_tick(raw_target, is_etf=is_etf, mode="floor")
+
+
 @dataclass
 class Position:
     """Represents a held stock position."""
@@ -98,6 +146,11 @@ class KisClient:
 
         self._access_token: str | None = None
         self._token_expires_at: float = 0.0
+        self._upper_limits: dict[str, int] = {}
+
+    def get_upper_limit(self, ticker: str) -> int | None:
+        """종목의 캐싱된 당일 상한가(stck_mxpr)를 반환합니다."""
+        return self._upper_limits.get(ticker)
 
     def get_access_token(self, force_refresh: bool = False) -> str:
         """Fetch or return cached OAuth access token (in-memory and file persistence)."""
@@ -215,6 +268,21 @@ class KisClient:
 
                 if resp.status_code >= 500:
                     resp.raise_for_status()
+                if resp.status_code == 200 and attempt < max_retries:
+                    try:
+                        body_json = resp.json()
+                        if isinstance(body_json, dict) and str(body_json.get("msg_cd") or "").strip() == "EGW00201":
+                            sleep_sec = max(0.3, backoff_factor * (2 ** (attempt - 1)))
+                            logger.warning(
+                                "KIS API rate limit exceeded (EGW00201, attempt %d/%d). Sleeping %.2fs...",
+                                attempt,
+                                max_retries,
+                                sleep_sec,
+                            )
+                            time.sleep(sleep_sec)
+                            continue
+                    except Exception:
+                        pass
                 return resp
             except (requests.ConnectionError, requests.Timeout, requests.HTTPError) as e:
                 # Do not retry 4xx client errors (except token expiration handled above)
@@ -267,6 +335,14 @@ class KisClient:
         data = resp.json()
 
         output = data.get("output", {})
+        mxpr_str = output.get("stck_mxpr")
+        if mxpr_str:
+            try:
+                mxpr_val = int(float(mxpr_str))
+                if mxpr_val > 0:
+                    self._upper_limits[ticker] = mxpr_val
+            except (ValueError, TypeError):
+                pass
         price_str = output.get("stck_prpr", "0")
         return float(price_str)
 
@@ -317,7 +393,9 @@ class KisClient:
         # Parse totals (output2)
         output2 = data.get("output2", [{}])
         tot_summary = output2[0] if output2 else {}
-        cash = float(tot_summary.get("dnca_tot_amt", 0.0))
+        dnca = float(tot_summary.get("dnca_tot_amt") or 0.0)
+        prvs = float(tot_summary.get("prvs_rcdl_excc_amt") or 0.0)
+        cash = prvs if prvs > 0 else dnca
         total_eval = float(tot_summary.get("tot_evlu_amt", 0.0))
 
         return Balance(cash=cash, total_eval_amount=total_eval, positions=positions)
