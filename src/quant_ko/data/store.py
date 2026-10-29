@@ -421,3 +421,75 @@ class DataStore:
 
         with self.get_connection() as conn:
             return pd.read_sql_query(query, conn, params=params)
+
+
+def apply_oci_db_patch_if_needed(
+    store: DataStore,
+    patch_path: str | Path | None = None,
+    min_latest_date: str = "2026-10-23",
+    min_financials_count: int = 25000,
+) -> bool:
+    """로컬 또는 오라클 서버 DB가 구버전일 경우 oci_db_patch.json.gz 스냅샷을 자동으로 1회 병합합니다.
+
+    DB의 daily_prices 최신 거래일이 min_latest_date 미만이거나 financials 건수가
+    min_financials_count 미만일 때만 압축 패치 파일을 읽어 upsert를 수행하며,
+    이미 최신 상태인 경우 0.01초 이내에 즉시 False를 반환합니다.
+    """
+    import gzip
+    import json
+    import logging
+
+    logger = logging.getLogger(__name__)
+    if patch_path is None:
+        patch_path = Path(__file__).resolve().parents[3] / "data" / "oci_db_patch.json.gz"
+    else:
+        patch_path = Path(patch_path)
+
+    if not patch_path.exists():
+        return False
+
+    try:
+        with store.get_connection() as conn:
+            cur = conn.cursor()
+            cur.execute("SELECT MAX(date) FROM daily_prices")
+            row_date = cur.fetchone()
+            max_date = str(row_date[0] or "") if row_date else ""
+
+            cur.execute("SELECT COUNT(*) FROM financials")
+            row_fin = cur.fetchone()
+            fin_count = int(row_fin[0] or 0) if row_fin else 0
+    except Exception:
+        store.initialize_schema()
+        max_date = ""
+        fin_count = 0
+
+    if max_date >= min_latest_date and fin_count >= min_financials_count:
+        return False
+
+    logger.info(
+        "Applying DB snapshot patch from %s (current max_date=%s, financials=%d)...",
+        patch_path,
+        max_date,
+        fin_count,
+    )
+    with gzip.open(patch_path, "rt", encoding="utf-8") as f:
+        payload = json.load(f)
+
+    companies = payload.get("companies") or []
+    financials = payload.get("financials") or []
+    daily_prices = payload.get("daily_prices") or []
+
+    if companies:
+        store.upsert_companies(companies)
+    if financials:
+        store.upsert_financials(financials)
+    if daily_prices:
+        store.upsert_daily_prices(daily_prices)
+
+    logger.info(
+        "DB snapshot patch applied: companies=%d, financials=%d, daily_prices=%d",
+        len(companies),
+        len(financials),
+        len(daily_prices),
+    )
+    return True

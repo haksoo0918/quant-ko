@@ -4,6 +4,7 @@ import logging
 import os
 import time
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 import requests
@@ -142,7 +143,11 @@ class KisClient:
 
         self.base_url = MOCK_BASE_URL if self.is_mock else REAL_BASE_URL
         self.session = session or requests.Session()
-        self.token_cache_file = f"data/kis_token_{'mock' if self.is_mock else 'real'}.json"
+        self.token_cache_file = str(
+            Path(__file__).resolve().parents[3]
+            / "data"
+            / f"kis_token_{'mock' if self.is_mock else 'real'}.json"
+        )
 
         self._access_token: str | None = None
         self._token_expires_at: float = 0.0
@@ -201,6 +206,9 @@ class KisClient:
 
         # Persist to disk
         try:
+            token_dir = os.path.dirname(self.token_cache_file)
+            if token_dir:
+                os.makedirs(token_dir, exist_ok=True)
             with open(self.token_cache_file, "w", encoding="utf-8") as f:
                 json.dump(
                     {"access_token": self._access_token, "expires_at": self._token_expires_at},

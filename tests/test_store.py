@@ -358,3 +358,80 @@ def test_datastore_context_manager_and_file_path(tmp_path):
         df2 = store2.get_companies()
         assert len(df2) == 1
         assert df2.iloc[0]["name"] == "삼성전자"
+
+
+def test_apply_oci_db_patch_if_needed(tmp_path):
+    """구버전 DB에 대해 oci_db_patch.json.gz 패치가 1회 자동 반영되고 이후 즉시 스킵되는지 검증."""
+    import gzip
+    import json
+
+    from quant_ko.data.store import apply_oci_db_patch_if_needed
+
+    patch_file = tmp_path / "oci_db_patch.json.gz"
+    patch_payload = {
+        "companies": [
+            {
+                "ticker": "000010",
+                "corp_code": "c1",
+                "name": "패치기업A",
+                "market": "KOSDAQ",
+                "sector": "IT",
+                "listed_at": "2020-01-01",
+                "delisted_at": None,
+                "fiscal_month": 12,
+                "is_preferred": 0,
+                "is_spac": 0,
+            }
+        ],
+        "financials": [
+            {
+                "corp_code": "c1",
+                "fiscal_year": 2025,
+                "quarter": 4,
+                "fs_type": "CFS",
+                "revenue": 100.0,
+                "gross_profit": 50.0,
+                "op_income": 20.0,
+                "net_income_owner": 15.0,
+                "total_liabilities": 30.0,
+                "total_equity": 70.0,
+                "capital_stock": 10.0,
+                "rcept_dt": "20260320",
+            }
+        ],
+        "daily_prices": [
+            {
+                "ticker": "000010",
+                "date": "2026-10-29",
+                "close": 12300.0,
+                "market_cap": 50_000_000_000.0,
+                "trading_value": 500_000_000.0,
+            }
+        ],
+    }
+    with gzip.open(patch_file, "wt", encoding="utf-8") as f:
+        json.dump(patch_payload, f)
+
+    store = DataStore(":memory:")
+    store.initialize_schema()
+
+    # 1차 호출: DB가 비어있으므로 패치가 적용되어 True 반환
+    applied1 = apply_oci_db_patch_if_needed(
+        store,
+        patch_path=patch_file,
+        min_latest_date="2026-10-23",
+        min_financials_count=1,
+    )
+    assert applied1 is True
+    assert len(store.get_companies()) == 1
+    assert len(store.get_financials()) == 1
+    assert store.get_trading_days() == ["2026-10-29"]
+
+    # 2차 호출: 이미 최신 상태이므로 패치 파일을 읽지 않고 즉시 False 반환
+    applied2 = apply_oci_db_patch_if_needed(
+        store,
+        patch_path=patch_file,
+        min_latest_date="2026-10-23",
+        min_financials_count=1,
+    )
+    assert applied2 is False

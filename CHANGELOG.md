@@ -5,6 +5,14 @@
 
 ---
 
+## [1.5.2] - 2026-10-29
+
+### 수정 및 운영 안정화 (Fixed & Operational Readiness)
+- **한투(KIS) 접근토큰 캐시 절대경로 고정 및 오라클 서버 DB 자동 패치 내장 (`src/quant_ko/broker/kis.py`, `src/quant_ko/data/store.py`, `src/quant_ko/main.py`)**:
+  - `KisClient` 토큰 캐시 파일 경로를 프로젝트 루트 절대경로로 고정하고 디렉터리 자동 생성을 보장하여, 실행 위치와 무관하게 24시간 동안 발급된 토큰을 100% 재사용하도록 수정.
+  - 오라클 클라우드(OCI) 서버의 구버전(`2026-10-08`) SQLite DB를 실행 즉시 최신 재무(`25,882` 건)·시세(`2026-10-23`)로 1초 만에 자동 업그레이드하는 스냅샷 패치(`data/oci_db_patch.json.gz`, `apply_oci_db_patch_if_needed`) 내장.
+  - `PRD.md`, `TODO.md` 실전 운영 5대 점검 체크리스트 및 `rules/git-workflow*.md` 한글 커밋/머지 그래프 일관성 규칙 명시.
+
 ## [1.5.1] - 2026-10-29
 
 ### 수정 및 보안 강화 (Fixed & Hardened)

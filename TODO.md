@@ -68,3 +68,11 @@
   - [x] 단위/통합 테스트 98개 전원 통과 (All-Green)
   - [x] Ruff 린트/포맷터 0 errors / 0 warnings 완벽 준수
   - [x] Standards & Spec 2축 코드리뷰 및 권장사항(지연 재시도 로직) 구현 완료
+
+
+## 🛡️ 실전 계좌(`REAL`) 전환 및 오라클 서버 배포 5대 점검 체크리스트
+- [x] **① `.env` 실계좌 설정**: `KIS_MODE=REAL`, `KIS_REAL_APP_KEY`, `KIS_REAL_APP_SECRET`, `KIS_REAL_CANO`, `DISCORD_WEBHOOK_URL` 설정 확인
+- [x] **② 크론탭 `--env real --strategy seasonality` 및 `git pull origin main`**: OCI 크론탭에서 `git pull origin main` 선행 및 실전 계절성 옵션(`--env real --strategy seasonality`) 적용 확인
+- [x] **③ 한투 토큰 캐시 파일 유지**: 절대경로 기반 `data/kis_token_real.json` 24시간 캐시 재사용으로 토큰 발급 제한(`EGW00133`) 방어
+- [x] **④ SQLite DB 최신 시세/재무 정합성**: `data/oci_db_patch.json.gz` 경량 스냅샷 자동 패치(`apply_oci_db_patch_if_needed`)로 오라클 서버 DB 즉시 최신화 보장
+- [x] **⑤ 15:20 동시호가 +5% 지정가 주문**: 매수 시 +5% 지정가(`00`, KRX 호가단위 내림, 상한가 캡, 증거금 부족 시 `buy_qty - 1` 자동 재시도) 및 매도 시 시장가(`01`) 주문 검증 완료

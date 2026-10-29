@@ -21,7 +21,7 @@ from dotenv import load_dotenv
 
 from quant_ko.broker.kis import KisClient
 from quant_ko.data.krx import KrxClient
-from quant_ko.data.store import DataStore
+from quant_ko.data.store import DataStore, apply_oci_db_patch_if_needed
 from quant_ko.live.monitor import DailyMonitor
 from quant_ko.live.rebalancer import LiveRebalancer
 from quant_ko.notify.discord import DiscordNotifier
@@ -132,6 +132,7 @@ def main() -> None:
     is_mock = args.env.lower() == "mock"
 
     store = DataStore("data/quant_ko.db")
+    apply_oci_db_patch_if_needed(store)
     kis_client = KisClient(is_mock=is_mock)
     webhook_url = os.getenv("DISCORD_WEBHOOK_URL")
     notifier = DiscordNotifier(webhook_url=webhook_url) if webhook_url else None

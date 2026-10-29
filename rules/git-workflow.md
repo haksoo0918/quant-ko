@@ -25,8 +25,10 @@ All commits must follow the Korean Conventional Commits format:
 | `테스트` | `test` | 테스트 코드 추가/수정 | `테스트(api): 주문 결제 통합 테스트 추가` |
 | `관리` | `chore` | 빌드, 도구, 의존성 업데이트 | `관리(의존성): biome v1.9 버전 상향` |
 | `스타일` | `style` | 코드 포맷팅, 스타일 수정 | `스타일(공통): 린터 포맷팅 규칙 적용` |
+| `머지` | `merge` | `dev` 브랜치를 `main` 에 병합하는 머지 커밋 | `머지(release): v1.5.1 실전 계좌 안전장치 배포` |
 
 ### Commit Rules (커밋 작성 규칙)
+- **Never use English commit types (`feat`, `fix`, `docs`, `chore`, etc.)**. Always use the Korean commit types listed above.
 - All commit types, scopes, summaries, and bodies must be written in Korean.
 - Do not end the summary line with a period.
 - Ensure commits are atomic: one logical change per commit.
@@ -60,8 +62,11 @@ dev  (Daily development - Antigravity workspace)
    - Verify tests, linters, PRD, and CHANGELOG before merging:
      ```bash
      git checkout main
-     git merge dev --no-ff
+     git merge dev --no-ff -m "머지(release): vX.Y.Z <요약>"
      ```
+   - **Graph Consistency Rules**:
+     - Always use `--no-ff` with `머지(release): ...` when merging `dev` into `main` (never fast-forward `main`).
+     - Never run `git merge main` onto `dev` (`dev` must remain a clean linear development branch without reverse merges from `main`).
 3. **Stage 3: Remote Push & Sync (`main` branch only, on explicit user instruction & approval)**:
    - Remote push and sync is permitted **ONLY on `main` branch**.
    - Push to `origin/main` ONLY when explicitly authorized by the user.

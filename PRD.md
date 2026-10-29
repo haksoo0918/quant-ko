@@ -236,3 +236,11 @@ tests/
 4. **[Tab 4] 봇 운영 상태 & 유니버스 점검 (Bot & Universe Status):**
    - 일일 감시 봇 최근 진단 이력 및 디스코드 웹훅 연동 상태
    - 다음 리밸런싱 예정일(D-1 / 당일) 카운트다운 및 타깃 후보 사전 조회
+
+
+### 6.1 실전 계좌(`REAL`) 전환 및 오라클 서버 배포 5대 체크리스트
+1. **① `.env` 실계좌 설정**: `KIS_MODE=REAL` 및 `KIS_REAL_APP_KEY`, `KIS_REAL_APP_SECRET`, `KIS_REAL_CANO` (계좌 앞 8자리), `KIS_REAL_ACNT_PRDT_CD=01`, `DISCORD_WEBHOOK_URL` 설정 확인
+2. **② 크론탭 `--env real --strategy seasonality` 및 `git pull origin main`**: OCI 서버 크론탭에서 매매 실행 전 `(git pull origin main >> deploy.log 2>&1 || true)` 가 선행되고 `--env real --strategy seasonality` 옵션으로 기동되는지 확인
+3. **③ 한투 토큰 캐시 파일 유지**: 프로젝트 루트 절대경로 기반 `data/kis_token_real.json` 파일이 유지되어 24시간 내 불필요한 토큰 재발급(1분당 1회 제한 `EGW00133`)이 발생하지 않는지 확인
+4. **④ SQLite DB 최신 시세/재무 정합성**: `data/oci_db_patch.json.gz` 자동 병합(`apply_oci_db_patch_if_needed`)을 통해 `companies` (2,872건), `financials` (25,882건), `daily_prices` 최신 시세가 정상 반영되었는지 확인
+5. **⑤ 15:20 동시호가 +5% 지정가 주문**: 매수 시 상한가(+30%) 증거금 잠김을 방지하고 당일 15:30 종가로 100% 체결되도록 **현재가 +5% 지정가 (`ORD_DVSN="00"`, 상한가 `stck_mxpr` 캡 및 1주 감량 자동 재시도 포함)** 가 작동하는지 확인
