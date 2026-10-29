@@ -1031,3 +1031,361 @@ def test_daily_monitor_syncs_realtime_designations_from_krx(store):
 
 
 
+
+def test_dynamic_weekday_calendar_augmentation_for_live_october_rebalance(store):
+    """DB에 과거 시세(예: 10/23까지)만 있어도 10/29(D-1) 및 10/30(월말 리밸런싱일)을 정확히 감지하는지 검증."""
+    from quant_ko.live.rebalancer import get_augmented_trading_days
+
+    # DB에 2026-10-23까지만 거래일이 존재하는 상황 가정
+    historical_days = [
+        "2026-10-21",
+        "2026-10-22",
+        "2026-10-23",
+    ]
+    aug_days = get_augmented_trading_days(historical_days, "2026-10-29")
+    assert "2026-10-29" in aug_days
+    assert "2026-10-30" in aug_days
+    # 10월 31일은 토요일이므로 제외되어야 함
+    assert "2026-10-31" not in aug_days
+    # 10월 9일(한글날) 및 10월 3일(개천절)은 공휴일이므로 제외되어야 함
+    assert "2026-10-09" not in aug_days
+
+    rebalancer = LiveRebalancer(
+        store=store,
+        kis_client=MagicMock(),
+        notifier=MagicMock(),
+        rebalance_freq="monthly",
+    )
+    assert rebalancer.is_d_minus_one("2026-10-29", historical_days) is True
+    assert rebalancer.is_rebalance_date("2026-10-30", historical_days) is True
+    assert rebalancer.is_rebalance_date("2026-10-29", historical_days) is False
+
+
+def test_rebalancer_october_end_selects_active_stocks_and_uses_plus_5pct_limit_buy(store):
+    """10월 말(2026-10-30) 리밸런싱 시 파킹이 아닌 소형주 종목을 편입하고 +5% 지정가(00) 매수 주문을 전송하는지 검증."""
+    notifier = DiscordNotifier(mock_mode=True)
+    kis_mock = MagicMock(spec=KisClient)
+
+    # 2,000,000원 예수금 (주식 2종목 000010, 000020 각 50% 타깃)
+    kis_mock.fetch_balance.return_value = Balance(
+        cash=2_000_000.0,
+        total_eval_amount=2_000_000.0,
+        positions=[],
+    )
+    price_map = {"000010": 10000.0, "000020": 20000.0}
+    kis_mock.fetch_current_price.side_effect = lambda t: price_map.get(t, 10000.0)
+
+    placed_calls = []
+
+    def mock_place_order(ticker, side, qty, price, order_type="01"):
+        placed_calls.append(
+            {
+                "ticker": ticker,
+                "side": side,
+                "qty": qty,
+                "price": price,
+                "order_type": order_type,
+            }
+        )
+        return OrderResult(
+            order_no=f"ORD_{ticker}",
+            ticker=ticker,
+            side=side,
+            qty=qty,
+            price=price,
+            success=True,
+            message="OK",
+        )
+
+    kis_mock.place_order.side_effect = mock_place_order
+
+    rebalancer = LiveRebalancer(
+        store=store,
+        kis_client=kis_mock,
+        notifier=notifier,
+        env="real",
+        strategy_mode="seasonality",
+        buy_buffer_pct=0.05,
+    )
+
+    result = rebalancer.execute(
+        rebalance_date="2026-10-30",
+        pit_date="2026-04-01",
+        universe_kwargs={"market_cap_quantile": 1.0},
+    )
+
+    assert result["success"] is True
+    # 10월 30일은 11~4월 활성 구간 진입일이므로 CD금리 ETF(357870)가 아닌 소형주(000010, 000020)가 매수되어야 함
+    bought_tickers = {c["ticker"] for c in placed_calls if c["side"] == "BUY"}
+    assert bought_tickers == {"000010", "000020"}
+
+    # 매수 주문이 +5% 호가 단위 지정가("00")로 전송되었는지 검증
+    call_10 = next(c for c in placed_calls if c["ticker"] == "000010")
+    assert call_10["order_type"] == "00"
+    assert call_10["price"] == 10500.0  # 10,000 * 1.05
+
+    call_20 = next(c for c in placed_calls if c["ticker"] == "000020")
+    assert call_20["order_type"] == "00"
+    assert call_20["price"] == 21000.0  # 20,000 * 1.05
+
+    total_buy_limit_amount = sum(c["qty"] * c["price"] for c in placed_calls if c["side"] == "BUY")
+    assert total_buy_limit_amount <= 2_000_000.0
+
+
+def test_rebalancer_20_stocks_buy_limit_never_exceeds_available_cash_and_sell_is_market():
+    """20종목 리밸런싱 시 매도는 시장가(01), 매수는 +5% 호가단위 지정가(00)를 사용하며 지정가 총액이 가용 예수금의 100%를 절대 초과하지 않는지 검증."""
+    ds = DataStore(":memory:")
+    ds.initialize_schema()
+
+    companies = []
+    prices = []
+    financials = []
+    for i in range(1, 21):
+        ticker = f"{i * 10:06d}"
+        corp_code = f"c{i:04d}"
+        companies.append(
+            {
+                "ticker": ticker,
+                "corp_code": corp_code,
+                "name": f"소형주{i}",
+                "market": "KOSDAQ",
+                "sector": "IT",
+            }
+        )
+        # 다양한 가격대 설정 (KRX 호가단위 테스트 겸용)
+        px = 1500 + (i * 1230)
+        prices.append(
+            {
+                "ticker": ticker,
+                "date": "2026-10-29",
+                "close": px,
+                "market_cap": 30_000_000_000 + i * 1_000_000_000,
+                "trading_value": 500_000_000,
+            }
+        )
+        financials.append(
+            {
+                "corp_code": corp_code,
+                "fiscal_year": 2025,
+                "quarter": 4,
+                "fs_type": "CFS",
+                "revenue": 10_000_000_000,
+                "gross_profit": 5_000_000_000,
+                "op_income": 2_000_000_000,
+                "net_income_owner": 1_500_000_000,
+                "total_liabilities": 5_000_000_000,
+                "total_equity": 10_000_000_000,
+                "capital_stock": 2_000_000_000,
+                "rcept_dt": "20260320",
+            }
+        )
+
+    ds.upsert_companies(companies)
+    ds.upsert_daily_prices(prices)
+    ds.upsert_financials(financials)
+
+    kis_mock = MagicMock(spec=KisClient)
+    # 기존 보유 종목 999990 (전량 매도 대상) + 예수금 1,500,000원
+    kis_mock.fetch_balance.return_value = Balance(
+        cash=1_500_000.0,
+        total_eval_amount=2_000_000.0,
+        positions=[
+            Position(
+                ticker="999990",
+                name="기존보유주",
+                qty=50,
+                current_price=10000.0,
+                eval_amount=500_000.0,
+            )
+        ],
+    )
+    price_map = {p["ticker"]: float(p["close"]) for p in prices}
+    price_map["999990"] = 10000.0
+    kis_mock.fetch_current_price.side_effect = lambda t: price_map[t]
+
+    placed_calls = []
+
+    def mock_place_order(ticker, side, qty, price, order_type="01"):
+        placed_calls.append(
+            {
+                "ticker": ticker,
+                "side": side,
+                "qty": qty,
+                "price": price,
+                "order_type": order_type,
+            }
+        )
+        return OrderResult(
+            order_no=f"ORD_{side}_{ticker}",
+            ticker=ticker,
+            side=side,
+            qty=qty,
+            price=price,
+            success=True,
+            message="OK",
+        )
+
+    kis_mock.place_order.side_effect = mock_place_order
+
+    rebalancer = LiveRebalancer(
+        store=ds,
+        kis_client=kis_mock,
+        notifier=DiscordNotifier(mock_mode=True),
+        env="real",
+        strategy_mode="seasonality",
+        buy_buffer_pct=0.05,
+    )
+
+    result = rebalancer.execute(
+        rebalance_date="2026-10-30",
+        pit_date="2026-10-29",
+        universe_kwargs={"market_cap_quantile": 1.0},
+    )
+    ds.close()
+
+    assert result["success"] is True
+    sell_calls = [c for c in placed_calls if c["side"] == "SELL"]
+    buy_calls = [c for c in placed_calls if c["side"] == "BUY"]
+
+    assert len(sell_calls) == 1
+    assert sell_calls[0]["ticker"] == "999990"
+    assert sell_calls[0]["order_type"] == "01"
+
+    assert len(buy_calls) == 20
+    for c in buy_calls:
+        assert c["order_type"] == "00"
+
+    # 가용 예수금 = 초기 1,500,000 + 매도 정산금(500,000 * (1 - 0.003)) = 1,998,500원
+    expected_available_cash = 1_500_000.0 + 500_000.0 * (1.0 - 0.003)
+    total_buy_limit_outlay = sum(c["qty"] * c["price"] for c in buy_calls)
+    assert total_buy_limit_outlay <= expected_available_cash
+
+
+
+def test_rebalancer_caps_buy_limit_price_at_upper_limit(store):
+    """당일 급등주로 인해 현재가 +5%가 상한가(stck_mxpr)를 초과할 경우 상한가로 캡이 적용되는지 검증."""
+    notifier = DiscordNotifier(mock_mode=True)
+    kis_mock = MagicMock(spec=KisClient)
+
+    kis_mock.fetch_balance.return_value = Balance(
+        cash=2_000_000.0,
+        total_eval_amount=2_000_000.0,
+        positions=[],
+    )
+    # 000010 현재가 10,000원 (+5%는 10,500원), 그러나 당일 상한가(stck_mxpr)가 10,300원인 상황
+    price_map = {"000010": 10000.0, "000020": 20000.0}
+    upper_map = {"000010": 10300, "000020": 26000}
+    kis_mock.fetch_current_price.side_effect = lambda t: price_map.get(t, 10000.0)
+    kis_mock.get_upper_limit = MagicMock(side_effect=lambda t: upper_map.get(t))
+
+    placed_calls = []
+
+    def mock_place_order(ticker, side, qty, price, order_type="01"):
+        placed_calls.append(
+            {
+                "ticker": ticker,
+                "side": side,
+                "qty": qty,
+                "price": price,
+                "order_type": order_type,
+            }
+        )
+        return OrderResult(
+            order_no=f"ORD_{ticker}",
+            ticker=ticker,
+            side=side,
+            qty=qty,
+            price=price,
+            success=True,
+            message="OK",
+        )
+
+    kis_mock.place_order.side_effect = mock_place_order
+
+    rebalancer = LiveRebalancer(
+        store=store,
+        kis_client=kis_mock,
+        notifier=notifier,
+        env="real",
+        strategy_mode="seasonality",
+        buy_buffer_pct=0.05,
+    )
+
+    result = rebalancer.execute(
+        rebalance_date="2026-10-30",
+        pit_date="2026-04-01",
+        universe_kwargs={"market_cap_quantile": 1.0},
+    )
+
+    assert result["success"] is True
+    call_10 = next(c for c in placed_calls if c["ticker"] == "000010")
+    # 10,000 * 1.05 = 10,500원이지만 상한가 10,300원으로 캡이 씌워져야 함
+    assert call_10["price"] == 10300.0
+    assert call_10["order_type"] == "00"
+
+
+def test_rebalancer_buy_order_auto_retries_with_minus_one_qty_on_failure(store):
+    """마지막 종목 등에서 증거금/수수료 미세 오차로 1차 매수 거부 시 buy_qty - 1로 자동 재시도하여 체결시키는지 검증."""
+    notifier = DiscordNotifier(mock_mode=True)
+    kis_mock = MagicMock(spec=KisClient)
+
+    kis_mock.fetch_balance.return_value = Balance(
+        cash=2_000_000.0,
+        total_eval_amount=2_000_000.0,
+        positions=[],
+    )
+    price_map = {"000010": 10000.0, "000020": 20000.0}
+    kis_mock.fetch_current_price.side_effect = lambda t: price_map.get(t, 10000.0)
+    kis_mock.get_upper_limit = MagicMock(return_value=None)
+
+    attempts_000020 = []
+
+    def mock_place_order(ticker, side, qty, price, order_type="01"):
+        if ticker == "000020":
+            attempts_000020.append(qty)
+            # 1차 시도(원래 수량)는 증거금 부족으로 실패, 2차 시도(qty - 1)는 성공
+            if len(attempts_000020) == 1:
+                return OrderResult(
+                    order_no="",
+                    ticker=ticker,
+                    side=side,
+                    qty=qty,
+                    price=price,
+                    success=False,
+                    message="주문가능금액 초과",
+                )
+        return OrderResult(
+            order_no=f"ORD_{ticker}_{qty}",
+            ticker=ticker,
+            side=side,
+            qty=qty,
+            price=price,
+            success=True,
+            message="정상 주문",
+        )
+
+    kis_mock.place_order.side_effect = mock_place_order
+
+    rebalancer = LiveRebalancer(
+        store=store,
+        kis_client=kis_mock,
+        notifier=notifier,
+        env="real",
+        strategy_mode="seasonality",
+        buy_buffer_pct=0.05,
+    )
+
+    result = rebalancer.execute(
+        rebalance_date="2026-10-30",
+        pit_date="2026-04-01",
+        universe_kwargs={"market_cap_quantile": 1.0},
+    )
+
+    assert result["success"] is True
+    # 000020에 대해 1차 실패 후 1주 감량하여 총 2회 호출되었는지 확인
+    assert len(attempts_000020) == 2
+    assert attempts_000020[1] == attempts_000020[0] - 1
+
+    order_20 = next(o for o in result["orders"] if o["ticker"] == "000020")
+    assert order_20["success"] is True
+    assert order_20["qty"] == attempts_000020[1]

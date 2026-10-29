@@ -407,3 +407,30 @@ def test_score_and_select_tie_breaker_and_selection_limits():
     # Stock 1 has smaller market cap than Stock 25, so Stock 1 is ranked 1
     assert selected.iloc[0]["ticker"] == "000001"
     assert selected.iloc[-1]["ticker"] == "000020"
+
+
+def test_is_seasonality_parking_period_boundaries():
+    """월말 리밸런싱 경계일(4월 말, 10월 말)에 따른 계절성 파킹 구간 판정 검증."""
+    from quant_ko.strategy.universe import is_seasonality_parking_period
+
+    # 10월 말 리밸런싱(10/25 이상) 및 D-1일(10/29)은 11~4월 주식 활성 구간(False)으로 진입
+    assert is_seasonality_parking_period("2026-10-29") is False
+    assert is_seasonality_parking_period("2026-10-30") is False
+    assert is_seasonality_parking_period("2026-10-25") is False
+    # 10월 초/중순은 아직 5~10월 파킹 구간(True)
+    assert is_seasonality_parking_period("2026-10-01") is True
+    assert is_seasonality_parking_period("2026-10-24") is True
+
+    # 4월 말 리밸런싱(4/25 이상)은 5~10월 안전자산 파킹 구간(True)으로 진입
+    assert is_seasonality_parking_period("2026-04-25") is True
+    assert is_seasonality_parking_period("2026-04-30") is True
+    # 4월 초/중순은 아직 11~4월 주식 활성 구간(False)
+    assert is_seasonality_parking_period("2026-04-01") is False
+    assert is_seasonality_parking_period("2026-04-24") is False
+
+    # 5~9월은 파킹 구간(True), 11~3월은 주식 활성 구간(False)
+    assert is_seasonality_parking_period("2026-05-29") is True
+    assert is_seasonality_parking_period("2026-08-31") is True
+    assert is_seasonality_parking_period("2026-11-30") is False
+    assert is_seasonality_parking_period("2026-01-15") is False
+    assert is_seasonality_parking_period("2026-03-31") is False
