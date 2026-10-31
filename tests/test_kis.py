@@ -481,3 +481,193 @@ def test_kis_token_cache_file_uses_absolute_project_path():
     assert isinstance(client.token_cache_file, str)
     assert Path(client.token_cache_file).is_absolute()
     assert client.token_cache_file.endswith("kis_token_real.json")
+
+
+def test_kis_token_cache_reuse_logs_info_without_calling_api(tmp_path, caplog):
+    """캐시 재사용(in-memory 및 file-cached) 시 API 호출 없이 적절한 안내 로그를 남기는지 검증."""
+    import logging
+
+    cache_file = tmp_path / "kis_token_real.json"
+    client = KisClient("my_key", "my_secret", "12345678-01", is_mock=False)
+    client.token_cache_file = str(cache_file)
+
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.json.return_value = {
+        "access_token": "token_reuse_123",
+        "expires_in": 86400,
+    }
+
+    with caplog.at_level(logging.INFO):
+        # 1. 최초 발급: API 호출 및 신규 토큰 요청 로그 기록
+        with patch.object(client.session, "post", return_value=mock_resp) as mock_post:
+            tok1 = client.get_access_token()
+            assert tok1 == "token_reuse_123"
+            assert mock_post.call_count == 1
+            assert (
+                f"Requesting new KIS OAuth token from API (force_refresh=False, cache_file={client.token_cache_file})..."
+                in caplog.text
+            )
+
+        # 2. 인메모리 캐시 재사용: API 호출 없음 + in-memory 안내 로그
+        caplog.clear()
+        with patch.object(client.session, "post") as mock_post_unused:
+            tok2 = client.get_access_token()
+            assert tok2 == "token_reuse_123"
+            mock_post_unused.assert_not_called()
+            assert "Reusing cached KIS OAuth token from memory (valid for another" in caplog.text
+
+        # 3. 파일 캐시 재사용: 인메모리 초기화 후 재호출 -> API 호출 없음 + file 안내 로그
+        client._access_token = None
+        client._token_expires_at = 0.0
+        caplog.clear()
+        with patch.object(client.session, "post") as mock_post_unused2:
+            tok3 = client.get_access_token()
+            assert tok3 == "token_reuse_123"
+            mock_post_unused2.assert_not_called()
+            assert (
+                f"Reusing cached KIS OAuth token from {client.token_cache_file} (valid for another"
+                in caplog.text
+            )
+
+
+def test_kis_token_cache_atomic_file_replacement(tmp_path):
+    """토큰 저장 시 임시(.tmp) 파일 작성 후 os.replace로 원자적 교체되는지 검증."""
+    import os
+
+    cache_file = tmp_path / "kis_token_real.json"
+    client = KisClient("my_key", "my_secret", "12345678-01", is_mock=False)
+    client.token_cache_file = str(cache_file)
+
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.json.return_value = {
+        "access_token": "token_atomic_write",
+        "expires_in": 86400,
+    }
+
+    with (
+        patch.object(client.session, "post", return_value=mock_resp),
+        patch("os.replace", wraps=os.replace) as mock_replace,
+    ):
+        tok = client.get_access_token()
+        assert tok == "token_atomic_write"
+        assert cache_file.exists()
+        mock_replace.assert_called_once_with(f"{client.token_cache_file}.tmp", client.token_cache_file)
+
+
+def test_kis_token_cache_write_failure_logs_error(tmp_path, caplog):
+    """토큰 파일 저장 실패 시 예외를 조용히 삼키지 않고 logger.error를 남기며 임시파일을 정리하는지 검증."""
+    import logging
+
+    cache_file = tmp_path / "kis_token_real.json"
+    client = KisClient("my_key", "my_secret", "12345678-01", is_mock=False)
+    client.token_cache_file = str(cache_file)
+
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.json.return_value = {
+        "access_token": "token_write_fail",
+        "expires_in": 86400,
+    }
+
+    with caplog.at_level(logging.ERROR):
+        with (
+            patch.object(client.session, "post", return_value=mock_resp),
+            patch("os.replace", side_effect=OSError("Disk full or permission denied")),
+        ):
+            tok = client.get_access_token()
+            # 토큰 자체는 메모리상으로 정상 반환
+            assert tok == "token_write_fail"
+            # 에러 로그 확인
+            assert (
+                f"Failed to write KIS token cache file {client.token_cache_file}: Disk full or permission denied"
+                in caplog.text
+            )
+            # 임시 파일이 정리되었는지 확인
+            assert not (tmp_path / "kis_token_real.json.tmp").exists()
+
+
+def test_kis_token_cache_expired_triggers_fresh_fetch_and_atomic_update(tmp_path, caplog):
+    """만료된 캐시 파일이 있을 때 API를 통한 신규 발급을 수행하고 캐시 파일을 원자적으로 갱신하는지 검증."""
+    import json
+    import logging
+    import time
+
+    cache_file = tmp_path / "kis_token_real.json"
+    # 1시간 전 만료된 토큰 데이터 저장
+    expired_payload = {
+        "access_token": "expired_token_abc",
+        "expires_at": time.time() - 3600,
+    }
+    cache_file.write_text(json.dumps(expired_payload), encoding="utf-8")
+
+    client = KisClient("my_key", "my_secret", "12345678-01", is_mock=False)
+    client.token_cache_file = str(cache_file)
+
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.json.return_value = {
+        "access_token": "fresh_token_xyz",
+        "expires_in": 86400,
+    }
+
+    with caplog.at_level(logging.INFO):
+        with patch.object(client.session, "post", return_value=mock_resp) as mock_post:
+            tok = client.get_access_token()
+            assert tok == "fresh_token_xyz"
+            mock_post.assert_called_once()
+            assert "Requesting new KIS OAuth token from API" in caplog.text
+
+    # 캐시 파일이 새 토큰으로 원자적으로 갱신되었는지 확인
+    with open(cache_file, encoding="utf-8") as f:
+        new_data = json.load(f)
+    assert new_data["access_token"] == "fresh_token_xyz"
+    assert new_data["expires_at"] > time.time() + 80000
+
+
+def test_kis_token_cache_corrupt_logs_warning_and_recovers(tmp_path, caplog):
+    """캐시 파일이 손상된 경우 warning 로그를 남기고 API를 통해 정상 재발급 및 갱신하는지 검증."""
+    import logging
+
+    cache_file = tmp_path / "kis_token_real.json"
+    cache_file.write_text("{invalid json format: corrupt", encoding="utf-8")
+
+    client = KisClient("my_key", "my_secret", "12345678-01", is_mock=False)
+    client.token_cache_file = str(cache_file)
+
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.json.return_value = {
+        "access_token": "token_recovered_456",
+        "expires_in": 86400,
+    }
+
+    with caplog.at_level(logging.WARNING):
+        with patch.object(client.session, "post", return_value=mock_resp):
+            tok = client.get_access_token()
+            assert tok == "token_recovered_456"
+            assert f"Failed to read KIS token cache file {client.token_cache_file}:" in caplog.text
+
+
+def test_kis_token_cache_chmod_restricted_on_posix(tmp_path):
+    """POSIX 환경(리눅스 서버 등)에서 토큰 캐시 파일 권한이 0o600으로 제한되는지 검증."""
+    cache_file = tmp_path / "kis_token_real.json"
+    client = KisClient("my_key", "my_secret", "12345678-01", is_mock=False)
+    client.token_cache_file = str(cache_file)
+
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.json.return_value = {
+        "access_token": "token_posix_perm",
+        "expires_in": 86400,
+    }
+
+    with (
+        patch("os.name", "posix"),
+        patch("os.chmod") as mock_chmod,
+        patch.object(client.session, "post", return_value=mock_resp),
+    ):
+        tok = client.get_access_token()
+        assert tok == "token_posix_perm"
+        mock_chmod.assert_called_once_with(f"{client.token_cache_file}.tmp", 0o600)

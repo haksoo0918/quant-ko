@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import os
 import sys
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -39,6 +40,7 @@ from quant_ko.dashboard.data_loader import (  # noqa: E402
 
 try:
     import streamlit as st
+
     # Streamlit Cloud 배포 환경: st.secrets에 등록된 KIS API 키 및 설정을 os.environ에 자동 동기화
     if hasattr(st, "secrets"):
         try:
@@ -49,6 +51,25 @@ try:
             pass
 except ImportError:  # pragma: no cover - 오프라인/비설치 환경에서도 모듈 임포트 보장
     st = None  # type: ignore[assignment]
+
+
+def fetch_live_account_and_positions(
+    db_path: str | Path = "data/quant_ko.db",
+) -> dict[str, Any]:
+    """한투 API 실시간 잔고를 조회합니다 (Streamlit 환경에서는 1시간 캐시 적용)."""
+    return load_account_and_positions(db_path=db_path, fetch_live_kis=True)
+
+
+if st is not None and hasattr(st, "cache_data"):
+    try:
+        fetch_live_account_and_positions = st.cache_data(
+            ttl=3600, show_spinner="KIS 실시간 잔고 조회 중..."
+        )(fetch_live_account_and_positions)
+    except Exception:
+        pass
+
+
+_fetch_live_kis_account_cached = fetch_live_account_and_positions
 
 
 DASHBOARD_CSS = """
@@ -161,6 +182,47 @@ DASHBOARD_CSS = """
         background-color: #4338ca;
         color: #c7d2fe;
         font-weight: 700;
+    }
+    .badge-offline-db {
+        background-color: #1e293b;
+        color: #94a3b8;
+        border: 1px solid #475569;
+    }
+    .badge-live-kis {
+        background-color: #064e3b;
+        color: #6ee7b7;
+        border: 1px solid #059669;
+        font-weight: 700;
+        box-shadow: 0 0 8px rgba(16, 185, 129, 0.25);
+    }
+    /* 상단 배너 카드 내부 실시간 동기화 알약(Pill) 버튼 스타일링 */
+    div[data-testid="stLayoutWrapper"]:has(.quant-header-banner) button {
+        background: #1e293b !important;
+        color: #38bdf8 !important;
+        border: 1px solid #0284c7 !important;
+        border-radius: 9999px !important;
+        font-weight: 600 !important;
+        font-size: clamp(0.78rem, 1.2vw, 0.88rem) !important;
+        padding: 0.35rem 0.85rem !important;
+        height: auto !important;
+        min-height: 2.2rem !important;
+        cursor: pointer !important;
+        transition: all 0.2s ease-in-out !important;
+        display: inline-flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+        gap: 0.35rem !important;
+        box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2) !important;
+    }
+    div[data-testid="stLayoutWrapper"]:has(.quant-header-banner) button:hover {
+        background: #0284c7 !important;
+        color: #ffffff !important;
+        border-color: #38bdf8 !important;
+        box-shadow: 0 0 12px rgba(56, 189, 248, 0.45) !important;
+        transform: translateY(-1px) !important;
+    }
+    div[data-testid="stLayoutWrapper"]:has(.quant-header-banner) button:active {
+        transform: translateY(0) scale(0.98) !important;
     }
     [data-testid="stMetric"] {
         background-color: #f8fafc;
@@ -604,27 +666,19 @@ def create_backtest_comparison_figure() -> go.Figure:
 
 def _render_top_header_and_kpis(
     acc_info: dict[str, Any],
+    db_path: str | Path = "data/quant_ko.db",
 ) -> bool:
-    """상단 일체형 운용 배너(타이틀, 뱃지, 프라이버시 토글) 및 4대 핵심 KPI 메트릭 카드를 렌더링합니다."""
+    """상단 일체형 운용 배너(타이틀, 뱃지, 실시간 동기화 버튼, 프라이버시 토글) 및 4대 핵심 KPI 메트릭 카드를 렌더링합니다."""
     is_mock = bool(acc_info.get("is_mock", True))
     is_parking = bool(acc_info.get("is_parking_season", True))
     account_masked = str(acc_info.get("account_masked", "5021****-01"))
-    source_label = (
-        "🟢 KIS 실시간 연동"
-        if acc_info.get("source") == "KIS_LIVE"
-        else "💾 SQLite DB 오프라인 복원"
-    )
 
     mode_badge_cls = "badge-mock" if is_mock else "badge-real"
-    mode_badge_text = (
-        "🧪 모의투자 (상시보유 검증)" if is_mock else "🚀 실전투자 (계절성 운용)"
-    )
+    mode_badge_text = "🧪 모의투자 (상시보유 검증)" if is_mock else "🚀 실전투자 (계절성 운용)"
 
     season_badge_cls = "badge-parking" if is_parking else "badge-active"
     season_badge_text = (
-        "🛡️ 5~10월 CD금리 ETF 파킹기"
-        if is_parking
-        else "🔥 11~4월 소형주 적극 투자기"
+        "🛡️ 5~10월 CD금리 ETF 파킹기" if is_parking else "🔥 11~4월 소형주 적극 투자기"
     )
 
     countdown = get_next_rebalance_countdown()
@@ -633,15 +687,46 @@ def _render_top_header_and_kpis(
     )
 
     with st.container(border=True):
-        st.markdown('<div class="quant-header-banner" style="display:none;"></div>', unsafe_allow_html=True)
-        # 1행: 타이틀(좌측)과 프라이버시 토글 스위치(우측)를 수평 나란히 일체형 정렬
-        tcol1, tcol2 = st.columns([0.72, 0.28])
+        st.markdown(
+            '<div class="quant-header-banner" style="display:none;"></div>', unsafe_allow_html=True
+        )
+        # 1행: 타이틀(좌측), 실시간 동기화 버튼(중앙) 및 프라이버시 토글 스위치(우측) 수평 일체형 정렬
+        tcol1, tcol2, tcol3 = st.columns([0.56, 0.20, 0.24])
         with tcol1:
             st.markdown(
                 "<h1>📊 Quant-KO 소형주 성장·가치 자동매매 모니터링 대시보드</h1>",
                 unsafe_allow_html=True,
             )
         with tcol2:
+            sync_clicked = st.button(
+                "🔄 KIS 실시간 동기화",
+                help="한국투자증권 Open API에 접속하여 최신 실시간 계좌 잔고를 동기화합니다 (1시간 캐시 적용).",
+                use_container_width=True,
+            )
+            if sync_clicked:
+                try:
+                    live_res = fetch_live_account_and_positions(db_path=db_path)
+                    now_str = datetime.now().strftime("%H:%M")
+                    if not live_res.get("synced_at"):
+                        live_res["synced_at"] = now_str
+                    if hasattr(st, "session_state"):
+                        st.session_state["live_acc_info"] = live_res
+                        st.session_state["last_sync_time"] = live_res["synced_at"]
+                    if isinstance(live_res, dict) and live_res:
+                        acc_info.update(live_res)
+                    if hasattr(st, "toast"):
+                        st.toast(
+                            f"⚡ KIS 실시간 잔고 동기화 완료 ({live_res['synced_at']})",
+                            icon="✅",
+                        )
+                    elif hasattr(st, "success"):
+                        st.success(f"⚡ KIS 실시간 잔고 동기화 완료 ({live_res['synced_at']})")
+                except Exception as exc:
+                    if hasattr(st, "toast"):
+                        st.toast(f"⚠️ 실시간 잔고 동기화 실패: {exc}", icon="⚠️")
+                    elif hasattr(st, "error"):
+                        st.error(f"실시간 잔고 동기화 실패: {exc}")
+        with tcol3:
             privacy_mode = bool(
                 st.toggle(
                     "🔒 실전 금액 숨기기 (프라이버시)",
@@ -649,6 +734,22 @@ def _render_top_header_and_kpis(
                     help="실전 투자 시 전체 자산 평가액, 예수금, 보유 종목별 매입/평가금액을 '***원'으로 마스킹합니다.",
                 )
             )
+
+        # 데이터 소스 및 동기화 상태 뱃지 판별
+        if acc_info.get("source") == "KIS_LIVE":
+            st_sync_time = acc_info.get("synced_at")
+            if not st_sync_time and hasattr(st, "session_state"):
+                st_sync_time = st.session_state.get("last_sync_time")
+            sync_badge_text = (
+                f"⚡ KIS 실시간 잔고 ({st_sync_time} 동기화)"
+                if st_sync_time
+                else "⚡ KIS 실시간 잔고"
+            )
+            sync_badge_cls = "badge-live-kis"
+        else:
+            sync_badge_text = "📦 DB 체결 기반 잔고"
+            sync_badge_cls = "badge-offline-db"
+
         # 2행: 전폭(100%) 뱃지 행 - 타이틀 아래 전체 너비를 활용하여 뱃지 1줄 정렬 및 화면 잘림 완전 해소
         badge_html = (
             '<div class="quant-badge-container">'
@@ -656,7 +757,7 @@ def _render_top_header_and_kpis(
             f'<span class="quant-badge {season_badge_cls}">{season_badge_text}</span>'
             f'<span class="quant-badge badge-countdown">{rebalance_badge_text}</span>'
             f'<span class="quant-badge badge-account">계좌: {account_masked}</span>'
-            f'<span class="quant-badge badge-account">데이터 소스: {source_label}</span>'
+            f'<span class="quant-badge {sync_badge_cls}">{sync_badge_text}</span>'
             "</div>"
         )
         st.markdown(badge_html, unsafe_allow_html=True)
@@ -730,42 +831,46 @@ def _render_tab1_equity_and_portfolio(
                 "평균매입가": positions_df["avg_price"].map(
                     lambda x: "***원" if privacy_mode else f"{int(x):,}원"
                 ),
-                "현재가": positions_df["current_price"].map(
-                    lambda x: f"{int(x):,}원"
-                ),
+                "현재가": positions_df["current_price"].map(lambda x: f"{int(x):,}원"),
                 "평가금액": positions_df["eval_amount"].map(
                     lambda x: "***원" if privacy_mode else f"{int(x):,}원"
                 ),
-                "수익률(%)": positions_df["return_pct"].map(
-                    lambda x: f"{float(x):+.2f}%"
-                ),
-                "포트폴리오 비중(%)": positions_df["weight_pct"].map(
-                    lambda x: f"{float(x):.2f}%"
-                ),
+                "수익률(%)": positions_df["return_pct"].map(lambda x: f"{float(x):+.2f}%"),
+                "포트폴리오 비중(%)": positions_df["weight_pct"].map(lambda x: f"{float(x):.2f}%"),
             }
         )
         st.dataframe(display_pos, use_container_width=True, hide_index=True)
 
         # 보유 종목 긴급 리스크 및 재무 건전성 진단 섹션
         diagnoses = diagnose_held_positions_risk(positions_df, db_path=db_path)
-        with st.expander("🛡️ 보유 종목 긴급 리스크 & 관리종목 진단 (08:30 일일 감시 연동)", expanded=True):
+        with st.expander(
+            "🛡️ 보유 종목 긴급 리스크 & 관리종목 진단 (08:30 일일 감시 연동)", expanded=True
+        ):
             danger_cnt = sum(1 for d in diagnoses if d["severity"] == "DANGER")
             warning_cnt = sum(1 for d in diagnoses if d["severity"] == "WARNING")
             if danger_cnt > 0:
-                st.error(f"🚨 긴급 청산 대상 종목이 {danger_cnt}건 발견되었습니다! (다음 개장일 08:30 시장가 전량 청산)")
+                st.error(
+                    f"🚨 긴급 청산 대상 종목이 {danger_cnt}건 발견되었습니다! (다음 개장일 08:30 시장가 전량 청산)"
+                )
             elif warning_cnt > 0:
                 st.warning(f"⚠️ 주의 관찰 종목이 {warning_cnt}건 있습니다. (고부채비율 등)")
             else:
-                st.success("✅ 현재 보유 중인 모든 종목이 관리종목/투자주의환기/자본잠식 위험 없이 정상 상태입니다.")
+                st.success(
+                    "✅ 현재 보유 중인 모든 종목이 관리종목/투자주의환기/자본잠식 위험 없이 정상 상태입니다."
+                )
 
             for diag in diagnoses:
                 sev = diag["severity"]
-                cls_name = "risk-card-normal" if sev == "NORMAL" else ("risk-card-danger" if sev == "DANGER" else "risk-card-warning")
+                cls_name = (
+                    "risk-card-normal"
+                    if sev == "NORMAL"
+                    else ("risk-card-danger" if sev == "DANGER" else "risk-card-warning")
+                )
                 st.markdown(
                     f"""
                     <div class="{cls_name}">
-                        <span><strong>{diag['name']} ({diag['ticker']})</strong>: {diag['issues']}</span>
-                        <span style="font-size:0.82rem; opacity:0.9;">부채비율: {diag['debt_ratio']:.1f}% | 자본잠식률: {diag['impairment_ratio']:.1f}%</span>
+                        <span><strong>{diag["name"]} ({diag["ticker"]})</strong>: {diag["issues"]}</span>
+                        <span style="font-size:0.82rem; opacity:0.9;">부채비율: {diag["debt_ratio"]:.1f}% | 자본잠식률: {diag["impairment_ratio"]:.1f}%</span>
                     </div>
                     """,
                     unsafe_allow_html=True,
@@ -787,9 +892,19 @@ def _render_tab1_equity_and_portfolio(
     if not series_df.empty:
         # 1. 핵심 성과 지표 & 상관계수 4대 카드
         bcol1, bcol2, bcol3, bcol4 = st.columns(4)
-        bcol1.metric("누적 수익률 (전략 10.5년)", f"+{bt_data['total_return_strategy']:.2f}%", "초기 1,000만 ➔ 5,161만 원")
-        bcol2.metric("연평균 복리수익률 (CAGR)", f"{bt_data['cagr_strategy']:.2f}%", f"MDD {bt_data['mdd_strategy']:.2f}%")
-        bcol3.metric("KOSPI 상관계수", f"{bt_data['corr_kospi']:.4f}", "낮은 상관관계 (시장 독립성)")
+        bcol1.metric(
+            "누적 수익률 (전략 10.5년)",
+            f"+{bt_data['total_return_strategy']:.2f}%",
+            "초기 1,000만 ➔ 5,161만 원",
+        )
+        bcol2.metric(
+            "연평균 복리수익률 (CAGR)",
+            f"{bt_data['cagr_strategy']:.2f}%",
+            f"MDD {bt_data['mdd_strategy']:.2f}%",
+        )
+        bcol3.metric(
+            "KOSPI 상관계수", f"{bt_data['corr_kospi']:.4f}", "낮은 상관관계 (시장 독립성)"
+        )
         bcol4.metric("KOSDAQ 상관계수", f"{bt_data['corr_kosdaq']:.4f}", "소형주 시장 적정 동조화")
 
         # 2. 10.5개년 일별 누적 자산 성장 및 언더워터 낙폭 인터랙티브 차트
@@ -801,10 +916,14 @@ def _render_tab1_equity_and_portfolio(
         if not yearly_df.empty:
             st.markdown("#### 📅 10.5개년 연도별 수익률 및 KOSPI 대비 초과 성과")
             styled_yearly = yearly_df.copy()
-            styled_yearly["전략(소형주+계절성)"] = styled_yearly["전략(소형주+계절성)"].map(lambda v: f"{v:+.2f}%")
+            styled_yearly["전략(소형주+계절성)"] = styled_yearly["전략(소형주+계절성)"].map(
+                lambda v: f"{v:+.2f}%"
+            )
             styled_yearly["KOSPI 지수"] = styled_yearly["KOSPI 지수"].map(lambda v: f"{v:+.2f}%")
             styled_yearly["KOSDAQ 지수"] = styled_yearly["KOSDAQ 지수"].map(lambda v: f"{v:+.2f}%")
-            styled_yearly["KOSPI 대비 초과수익"] = styled_yearly["KOSPI 대비 초과수익"].map(lambda v: f"{v:+.2f}%p")
+            styled_yearly["KOSPI 대비 초과수익"] = styled_yearly["KOSPI 대비 초과수익"].map(
+                lambda v: f"{v:+.2f}%p"
+            )
             # 11개 행 전체가 스크롤 없이 한눈에 딱 맞게 표시되도록 높이 지정 (헤더 38px + 11행*35px = 약 430px)
             st.dataframe(styled_yearly, use_container_width=True, hide_index=True, height=435)
     else:
@@ -997,7 +1116,9 @@ def _render_tab4_universe_and_status(db_path: str) -> None:
             # 팩터 밸런스 프로파일 시각화 (밸류 vs 성장 순위 비교)
             if "밸류순위평균" in top20_df.columns and "성장순위평균" in top20_df.columns:
                 st.markdown("#### ⚖️ Top 20 종목 밸류(저평가) vs 성장(고성장) 팩터 프로파일")
-                st.caption("※ 순위 수치가 낮을수록(왼쪽·아래쪽) 해당 팩터에서 더 우수한 종목입니다.")
+                st.caption(
+                    "※ 순위 수치가 낮을수록(왼쪽·아래쪽) 해당 팩터에서 더 우수한 종목입니다."
+                )
                 fig_factor = go.Figure()
                 fig_factor.add_trace(
                     go.Scatter(
@@ -1054,8 +1175,13 @@ def main(db_path: str = "data/quant_ko.db") -> None:
     )
     st.markdown(DASHBOARD_CSS, unsafe_allow_html=True)
 
-    acc_info = load_account_and_positions(db_path=db_path, fetch_live_kis=True)
-    privacy_mode = _render_top_header_and_kpis(acc_info)
+    # 기본적으로 DB 기반 잔고를 로드하여 접속 시 불필요한 KIS 토큰 다중 발급 및 알림톡을 원천 차단합니다 (PRD Section 7.4).
+    if hasattr(st, "session_state") and "live_acc_info" in st.session_state:
+        acc_info = st.session_state["live_acc_info"]
+    else:
+        acc_info = load_account_and_positions(db_path=db_path, fetch_live_kis=False)
+
+    privacy_mode = _render_top_header_and_kpis(acc_info, db_path=db_path)
 
     tab1, tab2, tab3, tab4 = st.tabs(
         [

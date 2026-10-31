@@ -481,6 +481,7 @@ def test_streamlit_dashboard_full_ui_rendering_audit(
     # 정상 진단 메시지 및 타깃 산출 메시지 확인
     assert len(mock_st.success_messages) >= 1
 
+
 def test_load_account_and_positions_unfunded_waiting(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -531,3 +532,85 @@ def test_load_account_and_positions_custom_initial_capital(
     )
     assert info["initial_capital"] == 5_000_000.0
 
+
+def test_load_account_and_positions_default_offline(sample_dashboard_db: Path) -> None:
+    """fetch_live_kis 기본 인자가 False여서 KIS API 호출 없이 오프라인 모드로 로드되는지 검증합니다."""
+    info = load_account_and_positions(db_path=sample_dashboard_db)
+    assert info["source"] == "SQLITE_FALLBACK"
+    assert info["synced_at"] is None
+
+
+def test_top_header_and_kpis_offline_and_live_sync_behavior(sample_dashboard_db: Path) -> None:
+    """대시보드 상단 배너에서 오프라인 뱃지 및 동기화 버튼 클릭 시 실시간 뱃지와 잔고가 갱신되는지 검증합니다."""
+    from contextlib import contextmanager
+    from typing import Any
+
+    from quant_ko.dashboard import app as dashboard_app
+
+    offline_info = load_account_and_positions(db_path=sample_dashboard_db, fetch_live_kis=False)
+
+    class _MockHeaderStreamlit:
+        def __init__(self, button_clicked: bool = False) -> None:
+            self.button_clicked = button_clicked
+            self.markdowns: list[str] = []
+            self.metrics: list[Any] = []
+            self.toasts: list[str] = []
+            self.session_state: dict[str, Any] = {}
+
+        def markdown(self, body: str, **kwargs: Any) -> None:
+            self.markdowns.append(body)
+
+        def columns(self, spec: int | list[int]) -> list[Any]:
+            count = spec if isinstance(spec, int) else len(spec)
+            return [_MockHeaderColumn(self) for _ in range(count)]
+
+        def button(self, label: str, **kwargs: Any) -> bool:
+            return self.button_clicked
+
+        def toggle(self, label: str, value: bool = False, **kwargs: Any) -> bool:
+            return False
+
+        def toast(self, body: str, **kwargs: Any) -> None:
+            self.toasts.append(body)
+
+        def metric(self, label: str, value: Any, delta: Any = None) -> None:
+            self.metrics.append((label, value, delta))
+
+        @contextmanager
+        def container(self, **kwargs: Any) -> Any:
+            yield self
+
+    class _MockHeaderColumn:
+        def __init__(self, recorder: Any) -> None:
+            self._st = recorder
+
+        def __enter__(self) -> Any:
+            return self
+
+        def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
+            pass
+
+        def metric(self, label: str, value: Any, delta: Any = None) -> None:
+            self._st.metric(label=label, value=value, delta=delta)
+
+    # 1. 오프라인 기본 상태 (버튼 미클릭)
+    st_mock1 = _MockHeaderStreamlit(button_clicked=False)
+    orig_st = dashboard_app.st
+    dashboard_app.st = st_mock1
+    try:
+        acc_info_test = dict(offline_info)
+        dashboard_app._render_top_header_and_kpis(acc_info_test, db_path=str(sample_dashboard_db))
+        assert any("📦 DB 체결 기반 잔고" in m for m in st_mock1.markdowns)
+        assert any("badge-offline-db" in m for m in st_mock1.markdowns)
+
+        # 2. 실시간 동기화 상태 (source == KIS_LIVE)
+        live_info = dict(offline_info)
+        live_info["source"] = "KIS_LIVE"
+        live_info["synced_at"] = "14:30"
+        st_mock2 = _MockHeaderStreamlit(button_clicked=False)
+        dashboard_app.st = st_mock2
+        dashboard_app._render_top_header_and_kpis(live_info, db_path=str(sample_dashboard_db))
+        assert any("⚡ KIS 실시간 잔고 (14:30 동기화)" in m for m in st_mock2.markdowns)
+        assert any("badge-live-kis" in m for m in st_mock2.markdowns)
+    finally:
+        dashboard_app.st = orig_st

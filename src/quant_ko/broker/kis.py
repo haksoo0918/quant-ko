@@ -1,5 +1,6 @@
 """Korea Investment & Securities (한국투자증권 Open API) Client."""
 
+import json
 import logging
 import os
 import time
@@ -160,7 +161,6 @@ class KisClient:
     def get_access_token(self, force_refresh: bool = False) -> str:
         """Fetch or return cached OAuth access token (in-memory and file persistence)."""
         now = time.time()
-        import json
 
         if force_refresh:
             self._access_token = None
@@ -168,11 +168,19 @@ class KisClient:
             if os.path.exists(self.token_cache_file):
                 try:
                     os.remove(self.token_cache_file)
-                except Exception:
-                    pass
+                except Exception as exc:
+                    logger.warning(
+                        "Failed to remove KIS token cache file %s: %s", self.token_cache_file, exc
+                    )
 
         # 1. Check in-memory cache
         if self._access_token and now < self._token_expires_at - 60:
+            remaining_h = (self._token_expires_at - now) / 3600.0
+            logger.info(
+                "Reusing cached KIS OAuth token from %s (valid for another %.1f hours)",
+                "memory",
+                remaining_h,
+            )
             return self._access_token
 
         # 2. Check file cache (KIS token is valid for 24 hours, limited to 1 request per minute)
@@ -185,11 +193,24 @@ class KisClient:
                 if cached_token and now < cached_expires - 60:
                     self._access_token = cached_token
                     self._token_expires_at = cached_expires
+                    remaining_h = (cached_expires - now) / 3600.0
+                    logger.info(
+                        "Reusing cached KIS OAuth token from %s (valid for another %.1f hours)",
+                        self.token_cache_file,
+                        remaining_h,
+                    )
                     return self._access_token
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.warning(
+                    "Failed to read KIS token cache file %s: %s", self.token_cache_file, exc
+                )
 
         # 3. Request new token from KIS API
+        logger.info(
+            "Requesting new KIS OAuth token from API (force_refresh=%s, cache_file=%s)...",
+            force_refresh,
+            self.token_cache_file,
+        )
         url = f"{self.base_url}/oauth2/tokenP"
         payload = {
             "grant_type": "client_credentials",
@@ -204,18 +225,32 @@ class KisClient:
         expires_in = float(data.get("expires_in", 86400))
         self._token_expires_at = now + expires_in
 
-        # Persist to disk
+        # Persist to disk atomically with safe permissions
+        tmp_file = f"{self.token_cache_file}.tmp"
         try:
             token_dir = os.path.dirname(self.token_cache_file)
             if token_dir:
                 os.makedirs(token_dir, exist_ok=True)
-            with open(self.token_cache_file, "w", encoding="utf-8") as f:
+            with open(tmp_file, "w", encoding="utf-8") as f:
                 json.dump(
                     {"access_token": self._access_token, "expires_at": self._token_expires_at},
                     f,
                 )
-        except Exception:
-            pass
+            if os.name != "nt":
+                try:
+                    os.chmod(tmp_file, 0o600)
+                except Exception:
+                    pass
+            os.replace(tmp_file, self.token_cache_file)
+        except Exception as exc:
+            logger.error(
+                "Failed to write KIS token cache file %s: %s", self.token_cache_file, exc
+            )
+            if os.path.exists(tmp_file):
+                try:
+                    os.remove(tmp_file)
+                except Exception:
+                    pass
 
         return self._access_token
 

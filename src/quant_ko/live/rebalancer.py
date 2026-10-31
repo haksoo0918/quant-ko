@@ -650,7 +650,7 @@ class LiveRebalancer:
                         "price": price,
                         "status": "DRY_RUN"
                         if dry_run
-                        else ("ORDERED" if res_success else "FAILED"),
+                        else ("ORDERED" if res_success else "PENDING_CATCHUP"),
                         "filled_qty": buy_qty if dry_run else 0,
                         "env": self.env,
                     }
@@ -676,9 +676,23 @@ class LiveRebalancer:
                     time.sleep(0.5)
             except Exception as e:
                 logger.error("BUY order failed for %s: %s", ticker, e)
+                order_id = 0
+                if self.store is not None:
+                    order_id = self.store.insert_order(
+                        {
+                            "rebalance_date": norm_reb_date,
+                            "ticker": ticker,
+                            "side": "BUY",
+                            "qty": buy_qty,
+                            "price": price,
+                            "status": "PENDING_CATCHUP",
+                            "filled_qty": 0,
+                            "env": self.env,
+                        }
+                    )
                 executed_orders.append(
                     {
-                        "id": 0,
+                        "id": order_id,
                         "order_no": "",
                         "ticker": ticker,
                         "name": name,
@@ -721,11 +735,11 @@ class LiveRebalancer:
                 )
             )
 
-            # 3. 🟢 매수 체결 상세 (N건)
+            # 3. 🟢 매수 주문 접수 (N건 - 15:30 동시호가 체결 예정)
             buy_lines = [_format_order_line(o) for o in success_buys]
             fields.extend(
                 _chunk_field_lines(
-                    f"🟢 매수 체결 상세 ({len(success_buys)}건)",
+                    f"🟢 매수 주문 접수 ({len(success_buys)}건 - 15:30 동시호가 체결 예정)",
                     buy_lines,
                     "매수 내역 없음",
                 )
@@ -763,11 +777,23 @@ class LiveRebalancer:
             mode_tag = "[모의 실행 (Dry-Run)]" if dry_run else "[리밸런싱 완료]"
             embed_color = 0x3498DB if dry_run else (0xE74C3C if failed_orders else 0x2ECC71)
 
+            description_text = (
+                f"포트폴리오 총 평가액: {int(total_equity):,}원\n"
+                "주문 전송이 완료되었습니다.\n"
+                "※ 15:30 동시호가 중 +5% 초과 급등 등으로 미체결이 발생할 경우, "
+                "다음 거래일 15:20에 남은 예수금 범위 내에서 자동 보충 매수됩니다."
+            )
+            footer_notice = (
+                "※ 15:30 동시호가 중 +5% 초과 급등 등으로 미체결이 발생할 경우, "
+                "다음 거래일 15:20에 남은 예수금 범위 내에서 자동 보충 매수됩니다."
+            )
+
             self.notifier.send_embed(
                 title=f"📈 {mode_tag} {norm_reb_date}",
-                description=f"포트폴리오 총 평가액: {int(total_equity):,}원\n주문 전송이 완료되었습니다.",
+                description=description_text,
                 fields=fields,
                 color=embed_color,
+                footer_text=footer_notice,
             )
 
         return {
@@ -779,7 +805,11 @@ class LiveRebalancer:
         }
 
     def retry_unfilled_orders(self, date: str) -> list[dict[str, Any]]:
-        """Track and update unfilled or partially filled orders."""
+        """Track and update unfilled or partially filled orders.
+
+        15:35 체결 대조 시 미체결/취소된 매수 주문(BUY)은 status='PENDING_CATCHUP'으로 갱신하여
+        익일 1회 한정 보충 매수 큐에 등록합니다.
+        """
         norm_date = normalize_date(date)
         db_orders = self.store.get_orders(rebalance_date=norm_date, env=self.env)
         if db_orders.empty:
@@ -796,10 +826,20 @@ class LiveRebalancer:
         for _, row in pending_orders.iterrows():
             order_id = int(row["id"])
             ticker = str(row["ticker"])
+            side = str(row["side"])
             if ticker in broker_map:
                 bo = broker_map[ticker]
-                new_status = bo.get("status", row["status"])
+                broker_status = bo.get("status", row["status"])
                 filled_qty = bo.get("filled_qty", row["filled_qty"])
+
+                if side == "BUY" and (
+                    broker_status in ["CANCELLED", "UNFILLED", "REJECTED"]
+                    or (filled_qty == 0 and broker_status not in ["FILLED"])
+                ):
+                    new_status = "PENDING_CATCHUP"
+                else:
+                    new_status = broker_status
+
                 self.store.update_order_status(
                     order_id=order_id,
                     status=new_status,
@@ -815,3 +855,398 @@ class LiveRebalancer:
                 )
 
         return updated_list
+
+    def catchup_unfilled_orders(
+        self,
+        as_of_date: str,
+        dry_run: bool = False,
+    ) -> dict[str, Any]:
+        """미체결 잔여 종목 자동 보충 매수 (다음 거래일 15:20 1회 한정 실행 및 큐 즉시 소멸).
+
+        1. DB에서 status == 'PENDING_CATCHUP' 큐 조회.
+        2. 대상 주문이 없으면 0초 만에 즉시 종료.
+        3. 대상 주문이 있으면 실계좌 잔고 조회 후 잔여 예수금 내에서 15:20 동시호가(+5% 지정가 ORD_DVSN='00') 매수 1회 시도.
+           - 성공 시: status="RESOLVED"
+           - 실패/거절 시: 추가 재시도 없이 status="EXPIRED"로 큐 완전 소멸
+           - 디스코드 알림:
+             - 성공 종목: 📢 [미체결 잔여 종목 보충 매수]
+             - 최종 실패 종목: ⚠️ [보충 매수 최종 실패]
+        """
+        norm_date = normalize_date(as_of_date)
+
+        # 1. Guard: 5~10월 파킹 구간이면 즉시 종료
+        if self.strategy_mode == "seasonality" and is_seasonality_parking_period(norm_date):
+            msg = f"오늘({norm_date})은 5~10월 파킹 구간이므로 미체결 보충 매수를 스킵합니다."
+            logger.info(msg)
+            return {"success": True, "count": 0, "orders": [], "message": msg}
+
+        # 2. DB에서 status == 'PENDING_CATCHUP'인 주문 조회
+        if self.store is None:
+            msg = "보충 매수 대상 큐(PENDING_CATCHUP)가 없습니다."
+            logger.info(msg)
+            return {"success": True, "count": 0, "orders": [], "message": msg}
+
+        orders_df = self.store.get_orders(env=self.env, status="PENDING_CATCHUP")
+        if orders_df.empty:
+            msg = "보충 매수 대상 큐(PENDING_CATCHUP)가 없습니다."
+            logger.info(msg)
+            return {"success": True, "count": 0, "orders": [], "message": msg}
+
+        # 3. 대상 주문이 있으므로 실계좌 잔고 조회
+        try:
+            balance = self.kis_client.fetch_balance()
+            available_cash = balance.cash
+        except Exception as e:
+            msg = f"실계좌 잔고 조회 실패: {e}"
+            logger.error(msg)
+            return {"success": False, "count": 0, "orders": [], "message": msg}
+
+        # 종목명 맵핑
+        unique_tickers = list(orders_df["ticker"].unique())
+        name_map: dict[str, str] = {}
+        try:
+            c_df = self.store.get_companies(unique_tickers)
+            if not c_df.empty:
+                name_map = dict(zip(c_df["ticker"], c_df["name"], strict=False))
+        except Exception:
+            pass
+
+        def get_stock_name(t: str) -> str:
+            return name_map.get(t) or t
+
+        # 예수금 부족 검사 (available_cash <= 0)
+        if available_cash <= 0:
+            msg = "예수금 부족으로 보충 매수 불가"
+            logger.warning(msg)
+            failed_summaries: list[ExecutedOrderSummary] = []
+            for _, row in orders_df.iterrows():
+                order_id = int(row["id"])
+                ticker = str(row["ticker"])
+                qty = int(row["qty"])
+                price = float(row["price"])
+                self.store.update_order_status(order_id, status="EXPIRED")
+                failed_summaries.append(
+                    {
+                        "id": order_id,
+                        "order_no": "",
+                        "ticker": ticker,
+                        "name": get_stock_name(ticker),
+                        "side": "BUY",
+                        "qty": qty,
+                        "price": price,
+                        "amount": qty * price,
+                        "success": False,
+                        "message": "예수금 부족",
+                    }
+                )
+
+            if self.notifier:
+                fields: list[dict[str, Any]] = []
+                failed_lines = [_format_order_line(o, is_failure=True) for o in failed_summaries]
+                fields.extend(
+                    _chunk_field_lines(
+                        f"⚠️ 주문 실패/거절 ({len(failed_summaries)}건)",
+                        failed_lines,
+                        "실패 내역 없음",
+                    )
+                )
+                fields.append(
+                    {
+                        "name": "💰 계좌 요약",
+                        "value": f"현재 예수금: {int(available_cash):,}원 (주문 불가)",
+                        "inline": False,
+                    }
+                )
+                fields.append(
+                    {
+                        "name": "⚙️ 운용 환경",
+                        "value": f"{self.env.upper()}{' (DRY-RUN)' if dry_run else ''}",
+                        "inline": True,
+                    }
+                )
+                self.notifier.send_embed(
+                    title=f"⚠️ [보충 매수 최종 실패] {norm_date}",
+                    description="예수금 부족으로 인해 보충 매수 대상 종목 주문이 최종 취소(EXPIRED)되었습니다.",
+                    fields=fields,
+                    color=0xE74C3C,
+                )
+
+            return {
+                "success": False,
+                "count": 0,
+                "orders": failed_summaries,
+                "message": msg,
+            }
+
+        # 4. 관리종목 / 투자주의환기종목 검사
+        desig_df = self.store.get_designations(as_of_date=norm_date)
+        crit_desig_tickers = set()
+        if not desig_df.empty:
+            crit = desig_df[desig_df["type"].isin({"관리", "투자주의환기", "관리종목", "투자주의환기종목"})]
+            crit_desig_tickers = set(crit["ticker"].tolist())
+
+        # 5. 현재가 조회
+        prices: dict[str, float] = {}
+        for ticker in unique_tickers:
+            price = 0.0
+            try:
+                price = self.kis_client.fetch_current_price(ticker)
+                if type(self.kis_client).__name__ != "MagicMock":
+                    time.sleep(0.12)
+            except Exception:
+                pass
+            if price <= 0 and self.store is not None:
+                p_df = self.store.get_daily_prices(ticker=ticker)
+                if not p_df.empty:
+                    price = float(p_df["close"].iloc[-1])
+            if price <= 0:
+                price = 1.0
+            prices[ticker] = price
+
+        # 6. 각 주문 1회 실행
+        alloc_per_order = available_cash / len(orders_df)
+        success_orders: list[ExecutedOrderSummary] = []
+        failed_orders: list[ExecutedOrderSummary] = []
+
+        for _, row in orders_df.iterrows():
+            order_id = int(row["id"])
+            ticker = str(row["ticker"])
+            target_qty = int(row["qty"])
+            name = get_stock_name(ticker)
+
+            if ticker in crit_desig_tickers:
+                logger.warning("보충 매수 종목 %s이(가) 관리/환기종목으로 지정되어 제외(EXPIRED)합니다.", ticker)
+                self.store.update_order_status(order_id, status="EXPIRED")
+                failed_orders.append(
+                    {
+                        "id": order_id,
+                        "order_no": "",
+                        "ticker": ticker,
+                        "name": name,
+                        "side": "BUY",
+                        "qty": target_qty,
+                        "price": prices.get(ticker, 0.0),
+                        "amount": target_qty * prices.get(ticker, 0.0),
+                        "success": False,
+                        "message": "관리/환기종목 지정으로 제외",
+                    }
+                )
+                continue
+
+            price = prices.get(ticker, 0.0)
+            if price <= 0:
+                self.store.update_order_status(order_id, status="EXPIRED")
+                failed_orders.append(
+                    {
+                        "id": order_id,
+                        "order_no": "",
+                        "ticker": ticker,
+                        "name": name,
+                        "side": "BUY",
+                        "qty": target_qty,
+                        "price": price,
+                        "amount": 0.0,
+                        "success": False,
+                        "message": "유효 가격 없음",
+                    }
+                )
+                continue
+
+            buy_order_price = calc_buy_limit_price(
+                price,
+                buffer_pct=self.buy_buffer_pct,
+                is_etf=(ticker == self.cd_etf_ticker),
+                upper_limit=(
+                    self.kis_client.get_upper_limit(ticker)
+                    if hasattr(self.kis_client, "get_upper_limit")
+                    else None
+                ),
+            )
+            cost_per_share = buy_order_price * (1.0 + self.cost_rate)
+            max_buyable = (
+                math.floor(min(alloc_per_order, available_cash) / cost_per_share)
+                if cost_per_share > 0
+                else 0
+            )
+            buy_qty = min(target_qty, max_buyable)
+
+            if buy_qty <= 0:
+                logger.warning(
+                    "종목 %s: 배분 예수금 부족으로 매수 불가 (1주 필요금: %d원)",
+                    ticker,
+                    int(cost_per_share),
+                )
+                self.store.update_order_status(order_id, status="EXPIRED")
+                failed_orders.append(
+                    {
+                        "id": order_id,
+                        "order_no": "",
+                        "ticker": ticker,
+                        "name": name,
+                        "side": "BUY",
+                        "qty": target_qty,
+                        "price": price,
+                        "amount": target_qty * price,
+                        "success": False,
+                        "message": "배분 예수금 부족",
+                    }
+                )
+                continue
+
+            amount = buy_qty * price
+            try:
+                if dry_run:
+                    res_success = True
+                    order_no = f"DRY_CATCHUP_{ticker}"
+                    msg = "정상 접수 (Dry-Run)"
+                else:
+                    res = self.kis_client.place_order(
+                        ticker=ticker,
+                        side="BUY",
+                        qty=buy_qty,
+                        price=buy_order_price,
+                        order_type="00",
+                    )
+                    if not res.success and buy_qty > 1:
+                        logger.warning(
+                            "Catch-up BUY rejected for %s (qty=%d, msg=%s). Retrying with qty=%d...",
+                            ticker,
+                            buy_qty,
+                            res.message,
+                            buy_qty - 1,
+                        )
+                        buy_qty -= 1
+                        amount = buy_qty * price
+                        res = self.kis_client.place_order(
+                            ticker=ticker,
+                            side="BUY",
+                            qty=buy_qty,
+                            price=buy_order_price,
+                            order_type="00",
+                        )
+                    res_success = res.success
+                    order_no = res.order_no
+                    msg = res.message or ("정상 체결" if res.success else "주문 실패")
+
+                new_status = "RESOLVED" if res_success else "EXPIRED"
+                self.store.update_order_status(
+                    order_id,
+                    status=new_status,
+                    filled_qty=buy_qty if res_success else 0,
+                )
+
+                summary: ExecutedOrderSummary = {
+                    "id": order_id,
+                    "order_no": order_no,
+                    "ticker": ticker,
+                    "name": name,
+                    "side": "BUY",
+                    "qty": buy_qty,
+                    "price": price,
+                    "amount": amount,
+                    "success": res_success,
+                    "message": msg,
+                }
+                if res_success:
+                    success_orders.append(summary)
+                    total_outlay = buy_qty * cost_per_share
+                    available_cash -= total_outlay
+                else:
+                    failed_orders.append(summary)
+
+                if not dry_run:
+                    time.sleep(0.5)
+            except Exception as e:
+                logger.error("Catchup BUY order failed for %s: %s", ticker, e)
+                self.store.update_order_status(order_id, status="EXPIRED")
+                failed_orders.append(
+                    {
+                        "id": order_id,
+                        "order_no": "",
+                        "ticker": ticker,
+                        "name": name,
+                        "side": "BUY",
+                        "qty": buy_qty,
+                        "price": price,
+                        "amount": amount,
+                        "success": False,
+                        "message": f"시스템 오류 ({type(e).__name__})",
+                    }
+                )
+
+        # 7. 디스코드 알림
+        if self.notifier:
+            if success_orders:
+                fields: list[dict[str, Any]] = []
+                buy_lines = [_format_order_line(o) for o in success_orders]
+                fields.extend(
+                    _chunk_field_lines(
+                        f"🟢 보충 매수 주문 접수 ({len(success_orders)}건 - 15:30 동시호가 체결 예정)",
+                        buy_lines,
+                        "접수 내역 없음",
+                    )
+                )
+                fields.append(
+                    {
+                        "name": "💰 계좌 요약",
+                        "value": f"기존 잔여 예수금: {int(balance.cash):,}원 ➔ 주문 후 예상 예수금: {int(available_cash):,}원",
+                        "inline": False,
+                    }
+                )
+                fields.append(
+                    {
+                        "name": "⚙️ 운용 환경",
+                        "value": f"{self.env.upper()}{' (DRY-RUN)' if dry_run else ''}",
+                        "inline": True,
+                    }
+                )
+                mode_tag = " (모의 실행)" if dry_run else ""
+                self.notifier.send_embed(
+                    title=f"📢 [미체결 잔여 종목 보충 매수]{mode_tag} {norm_date}",
+                    description=(
+                        f"직전 리밸런싱 미체결 {len(success_orders)}종목에 대해 잔여 예수금 내 자동 보충 매수 주문(+5% 지정가)을 전송했습니다.\n"
+                        f"15:30 동시호가 체결 예정 | 잔여 예수금: {int(available_cash):,}원"
+                    ),
+                    fields=fields,
+                    color=0x3498DB if dry_run else 0x2ECC71,
+                )
+
+            if failed_orders:
+                fields = []
+                failed_lines = [_format_order_line(o, is_failure=True) for o in failed_orders]
+                fields.extend(
+                    _chunk_field_lines(
+                        f"⚠️ 주문 실패/거절 ({len(failed_orders)}건)",
+                        failed_lines,
+                        "실패 내역 없음",
+                    )
+                )
+                fields.append(
+                    {
+                        "name": "💰 계좌 요약",
+                        "value": f"현재 예수금: {int(available_cash):,}원",
+                        "inline": False,
+                    }
+                )
+                fields.append(
+                    {
+                        "name": "⚙️ 운용 환경",
+                        "value": f"{self.env.upper()}{' (DRY-RUN)' if dry_run else ''}",
+                        "inline": True,
+                    }
+                )
+                self.notifier.send_embed(
+                    title=f"⚠️ [보충 매수 최종 실패] {norm_date}",
+                    description="미체결 보충 매수 대상 종목 주문이 최종 실패(EXPIRED)하여 큐가 소멸되었습니다. 추가 재시도는 진행되지 않습니다.",
+                    fields=fields,
+                    color=0xE74C3C,
+                )
+
+        all_executed = success_orders + failed_orders
+        return {
+            "success": True,
+            "as_of_date": norm_date,
+            "count": len(success_orders),
+            "orders": all_executed,
+            "remaining_cash": available_cash,
+        }
