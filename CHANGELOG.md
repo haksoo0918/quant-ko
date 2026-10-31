@@ -5,6 +5,18 @@
 
 ---
 
+## [1.5.4] - 2026-11-01
+
+### 추가 및 개선 (Added & Changed)
+- **당일 20종목 100% 체결을 위한 1.5% 안전 현금 버퍼 적용 (`src/quant_ko/live/rebalancer.py`, `PRD.md`)**:
+  - 11\~4월 소형주 20종목 매수 시 +5% 지정가 증거금 잠김 누적으로 인한 마지막 종목 주문 거절을 방지하기 위해 98.5% 매수 배분 및 1.5% 안전 현금 버퍼(`cash_buffer_pct=0.015`) 기본 적용.
+  - 당일 20종목 100% 전량 체결을 제1원칙으로 확립하고, 익영업일 보충 매수(`PENDING_CATCHUP`)는 비상 안전망으로만 격리 작동하도록 보장.
+- **대시보드 실시간 잔고 자동 로드 복원 및 토큰 캐시 최적화 (`src/quant_ko/dashboard/app.py`, `PRD.md`)**:
+  - 대시보드 로드 시 유효 토큰(24시간)이 있으면 추가 API 호출 없이 기존 토큰을 재사용하고, 없을 때만 1회 자동 발급받는 1시간 Streamlit 캐시(`fetch_live_account_and_positions`) 적용으로 실계좌 19종목 즉시 표시 복원.
+- **10/30 미체결 누락 종목 자동 등록 및 운영 명세 정비 (`scripts/register_catchup.py`, `TODO.md`, `PRD.md`)**:
+  - 10/30 리밸런싱 시 예수금 부족으로 체결 누락된 `DH오토리드(290120)`를 식별하여 오라클 서버 DB에 `PENDING_CATCHUP` 큐로 등록 완료.
+  - OCI 운영 서버 환경 정보(경로 `/home/ubuntu/quant-ko`, 가상환경 `/home/ubuntu/quant-ko/.venv/bin/python`, 4대 크론탭 스케줄) 및 인스턴스 정지 방지(PAYG 전환) 과제 공식 문서화.
+
 ## [1.5.3] - 2026-11-01
 
 ### 추가 및 개선 (Added & Changed)
