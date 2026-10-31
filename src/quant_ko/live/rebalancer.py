@@ -160,6 +160,7 @@ class LiveRebalancer:
         cost_rate: float = 0.003,
         order_type: str = "01",
         buy_buffer_pct: float = 0.05,
+        cash_buffer_pct: float = 0.015,
     ) -> None:
         self.store = store
         self.kis_client = kis_client
@@ -171,6 +172,7 @@ class LiveRebalancer:
         self.cost_rate = cost_rate
         self.order_type = order_type
         self.buy_buffer_pct = buy_buffer_pct
+        self.cash_buffer_pct = cash_buffer_pct
 
     def is_rebalance_date(self, date: str, trading_days: list[str]) -> bool:
         """Check if given date matches scheduled rebalancing date."""
@@ -442,7 +444,11 @@ class LiveRebalancer:
             held_positions.get(t, 0) * prices.get(t, 0.0) for t in held_positions
         )
 
-        # Calculate desired shares (with +5% limit margin and cost buffer)
+        # Calculate desired shares (with +5% limit margin, cost buffer, and 1.5% safe cash buffer)
+        # 소형주 적극 투자 기간(11~4월 20종목 매수)에는 증거금 잠김에 따른 마지막 종목 미체결을 방지하기 위해 98.5%만 배분
+        is_parking_reb = (self.strategy_mode == "seasonality" and is_seasonality_parking_period(norm_reb_date))
+        effective_equity = total_equity if is_parking_reb else (total_equity * (1.0 - self.cash_buffer_pct))
+
         desired_target_shares: dict[str, int] = {}
         for ticker, weight in target_weights.items():
             price = prices.get(ticker, 0.0)
@@ -466,7 +472,7 @@ class LiveRebalancer:
                 else price
             )
             cost_per_share = effective_buy_price * (1.0 + self.cost_rate)
-            target_val = total_equity * weight
+            target_val = effective_equity * weight
             target_shares = math.floor(target_val / cost_per_share)
             if target_shares > 0:
                 desired_target_shares[ticker] = target_shares

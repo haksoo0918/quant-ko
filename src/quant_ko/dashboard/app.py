@@ -1175,11 +1175,17 @@ def main(db_path: str = "data/quant_ko.db") -> None:
     )
     st.markdown(DASHBOARD_CSS, unsafe_allow_html=True)
 
-    # 기본적으로 DB 기반 잔고를 로드하여 접속 시 불필요한 KIS 토큰 다중 발급 및 알림톡을 원천 차단합니다 (PRD Section 7.4).
+    # 대시보드 로드 시 KIS 실시간 잔고를 조회(1시간 캐시)하여 19종목을 즉시 표시합니다.
+    # 토큰이 유효하면 기존 토큰을 재사용하고, 토큰이 없을 때만 1회 자동 발급받습니다.
     if hasattr(st, "session_state") and "live_acc_info" in st.session_state:
         acc_info = st.session_state["live_acc_info"]
     else:
-        acc_info = load_account_and_positions(db_path=db_path, fetch_live_kis=False)
+        try:
+            acc_info = fetch_live_account_and_positions(db_path=db_path)
+            if hasattr(st, "session_state"):
+                st.session_state["live_acc_info"] = acc_info
+        except Exception:
+            acc_info = load_account_and_positions(db_path=db_path, fetch_live_kis=False)
 
     privacy_mode = _render_top_header_and_kpis(acc_info, db_path=db_path)
 
