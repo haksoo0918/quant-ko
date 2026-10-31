@@ -550,7 +550,7 @@ def test_rebalancer_comprehensive_discord_notification(store):
     assert "퇴출대상C(000030) 100주 @ 5,000원 (500,000원)" in sell_field[0]
 
     # 3. Buy execution details
-    buy_field = [v for k, v in field_map.items() if "매수 체결 상세" in k]
+    buy_field = [v for k, v in field_map.items() if "매수 주문 접수" in k]
     assert len(buy_field) >= 1
     assert "회사A(000010)" in buy_field[0]
     assert "회사B(000020)" in buy_field[0]
@@ -1389,3 +1389,188 @@ def test_rebalancer_buy_order_auto_retries_with_minus_one_qty_on_failure(store):
     order_20 = next(o for o in result["orders"] if o["ticker"] == "000020")
     assert order_20["success"] is True
     assert order_20["qty"] == attempts_000020[1]
+
+
+def test_rebalancer_discord_message_format_order_received(store):
+    """15:20 리밸런싱 주문 시 디스코드 알림이 '주문 접수' 명기 및 익일 자동 보충 안내를 포함하는지 검증."""
+    notifier = DiscordNotifier(mock_mode=True)
+    kis_mock = MagicMock(spec=KisClient)
+
+    kis_mock.fetch_balance.return_value = Balance(
+        cash=1_000_000.0,
+        total_eval_amount=1_000_000.0,
+        positions=[],
+    )
+    kis_mock.fetch_current_price.return_value = 10000.0
+    kis_mock.get_upper_limit = MagicMock(return_value=None)
+    kis_mock.place_order.return_value = OrderResult(
+        order_no="ORD123",
+        ticker="000010",
+        side="BUY",
+        qty=10,
+        price=10500.0,
+        success=True,
+        message="정상 접수",
+    )
+
+    rebalancer = LiveRebalancer(
+        store=store,
+        kis_client=kis_mock,
+        notifier=notifier,
+        env="real",
+        strategy_mode="seasonality",
+        buy_buffer_pct=0.05,
+    )
+
+    result = rebalancer.execute(
+        rebalance_date="2026-10-30",
+        pit_date="2026-04-01",
+        universe_kwargs={"market_cap_quantile": 1.0},
+    )
+
+    assert result["success"] is True
+    # Discord 발송 기록 확인
+    assert len(notifier.sent_messages) > 0
+    embed = notifier.sent_messages[-1]["embeds"][0]
+    assert "리밸런싱 완료" in embed["title"]
+    assert "15:30 동시호가 중 +5% 초과 급등" in embed["description"]
+    assert "다음 거래일 15:20에 남은 예수금 범위 내에서 자동 보충 매수" in embed["description"]
+
+    # 매수 필드 제목 확인
+    buy_field = next(f for f in embed["fields"] if "매수 주문 접수" in f["name"])
+    assert "15:30 동시호가 체결 예정" in buy_field["name"]
+
+
+def test_catchup_unfilled_orders_skips_in_parking_season(store):
+    """5~10월 파킹 시즌에는 주식 보충 매수를 건너뛰는지 검증."""
+    notifier = DiscordNotifier(mock_mode=True)
+    kis_mock = MagicMock(spec=KisClient)
+    rebalancer = LiveRebalancer(
+        store=store,
+        kis_client=kis_mock,
+        notifier=notifier,
+        env="real",
+    )
+
+    res = rebalancer.catchup_unfilled_orders(as_of_date="2026-06-15")
+    assert res["success"] is True
+    assert "파킹" in res["message"]
+    assert res["orders"] == []
+    assert kis_mock.place_order.call_count == 0
+
+
+def test_catchup_unfilled_orders_skips_when_20_stocks_held(store):
+    """이미 20종목 이상 보유 중이면 보충 매수가 건너뛰어지는지 검증."""
+    notifier = DiscordNotifier(mock_mode=True)
+    kis_mock = MagicMock(spec=KisClient)
+
+    # 20개 포지션 모의
+    positions = [
+        Position(ticker=f"0000{i:02d}", name=f"종목{i}", qty=10, eval_amount=100000, current_price=10000)
+        for i in range(20)
+    ]
+    kis_mock.fetch_balance.return_value = Balance(
+        cash=500_000.0,
+        total_eval_amount=2_500_000.0,
+        positions=positions,
+    )
+
+    rebalancer = LiveRebalancer(
+        store=store,
+        kis_client=kis_mock,
+        notifier=notifier,
+        env="real",
+    )
+
+    res = rebalancer.catchup_unfilled_orders(as_of_date="2026-11-02")
+    assert res["success"] is True
+    assert "정상 보유 중" in res["message"] or "미체결 없음" in res["message"]
+    assert res["orders"] == []
+    assert kis_mock.place_order.call_count == 0
+
+
+def test_catchup_unfilled_orders_buys_missing_stock_within_cash(store):
+    """직전 리밸런싱 미체결 1종목 발생 시 잔여 예수금 내에서 자동 보충 매수 주문 전송 및 알림 검증."""
+    notifier = DiscordNotifier(mock_mode=True)
+    kis_mock = MagicMock(spec=KisClient)
+
+    # 1. DB에 직전 리밸런싱(2026-10-30) 2개 종목 BUY 주문 등록
+    store.insert_order(
+        {
+            "rebalance_date": "2026-10-30",
+            "ticker": "000010",
+            "side": "BUY",
+            "qty": 50,
+            "price": 10000,
+            "status": "ORDERED",
+            "filled_qty": 50,
+            "env": "real",
+        }
+    )
+    store.insert_order(
+        {
+            "rebalance_date": "2026-10-30",
+            "ticker": "000020",
+            "side": "BUY",
+            "qty": 20,
+            "price": 20000,
+            "status": "ORDERED",
+            "filled_qty": 0,
+            "env": "real",
+        }
+    )
+
+    # 2. 실계좌에는 000010만 50주 있고, 000020은 미보유(미체결 취소), 예수금 313,887원 남음
+    kis_mock.fetch_balance.return_value = Balance(
+        cash=313_887.0,
+        total_eval_amount=813_887.0,
+        positions=[
+            Position(ticker="000010", name="회사A", qty=50, eval_amount=500000, current_price=10000),
+        ],
+    )
+    kis_mock.fetch_current_price.return_value = 20000.0
+    kis_mock.get_upper_limit = MagicMock(return_value=None)
+
+    placed_orders = []
+
+    def mock_place_order(ticker, side, qty, price, order_type="01"):
+        placed_orders.append({"ticker": ticker, "side": side, "qty": qty, "price": price, "order_type": order_type})
+        return OrderResult(
+            order_no="CATCHUP_ORD_1",
+            ticker=ticker,
+            side=side,
+            qty=qty,
+            price=price,
+            success=True,
+            message="정상 접수",
+        )
+
+    kis_mock.place_order.side_effect = mock_place_order
+
+    rebalancer = LiveRebalancer(
+        store=store,
+        kis_client=kis_mock,
+        notifier=notifier,
+        env="real",
+        buy_buffer_pct=0.05,
+    )
+
+    # 다음 거래일 15:20 보충 매수 실행
+    res = rebalancer.catchup_unfilled_orders(as_of_date="2026-11-02", dry_run=False)
+
+    assert res["success"] is True
+    assert len(res["orders"]) == 1
+    assert res["orders"][0]["ticker"] == "000020"
+    assert res["orders"][0]["success"] is True
+
+    # 주문 단가: 20000 * 1.05 = 21000원 (+5% 지정가)
+    assert placed_orders[0]["price"] == 21000.0
+    assert placed_orders[0]["order_type"] == "00"
+    # 수량: 313,887 / (21000 * 1.00015) = 약 14주, 이전 타깃 20주 한도 내
+    assert placed_orders[0]["qty"] == 14
+
+    # Discord 알림 확인
+    assert len(notifier.sent_messages) > 0
+    embed = notifier.sent_messages[-1]["embeds"][0]
+    assert "보충 매수" in embed["title"]
+    assert "직전 리밸런싱 미체결 1종목" in embed["description"]

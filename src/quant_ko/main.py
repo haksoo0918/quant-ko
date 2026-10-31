@@ -207,8 +207,21 @@ def main() -> None:
         if not args.force:
             trading_days = store.get_trading_days()
             if not rebalancer.is_rebalance_date(target_date, trading_days):
+                # 정기 리밸런싱일이 아닌 경우: 11~4월 활성 구간이면 미체결 잔여 종목 자동 보충 매수
+                if not is_seasonality_parking_period(target_date):
+                    catchup_res = rebalancer.catchup_unfilled_orders(
+                        as_of_date=target_date,
+                        dry_run=args.dry_run,
+                    )
+                    if catchup_res.get("orders") and len(catchup_res["orders"]) > 0:
+                        logger.info(
+                            "미체결 잔여 종목 보충 매수 완료: %d건 주문 실행",
+                            len(catchup_res["orders"]),
+                        )
+                        sys.exit(0)
+
                 logger.info(
-                    "오늘(%s)은 정기 리밸런싱일이 아닙니다 (매월 마지막 거래일). 작업을 안전하게 종료합니다.",
+                    "오늘(%s)은 정기 리밸런싱일이 아니며 미체결 보충 대상도 없습니다. 작업을 안전하게 종료합니다.",
                     target_date,
                 )
                 sys.exit(0)
