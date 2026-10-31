@@ -4,7 +4,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from quant_ko.broker.kis import Balance, KisClient, OrderResult, Position
+from quant_ko.broker.kis import Balance, KisClient, OrderResult
 from quant_ko.data.store import DataStore
 from quant_ko.live.rebalancer import LiveRebalancer
 from quant_ko.notify.discord import DiscordNotifier
@@ -123,41 +123,65 @@ def test_rebalance_message_refinement(store):
     assert notice_text in desc or notice_text in footer
 
 
-def test_catchup_unfilled_orders_buys_unfilled_stock(store):
-    """Test when 1 stock was unfilled previously, catchup buys it using remaining cash at 15:20."""
+def test_catchup_no_pending_orders_exits_immediately(store):
+    """Test when no PENDING_CATCHUP queue exists, catchup exits immediately without broker calls."""
     notifier = DiscordNotifier(mock_mode=True)
     kis_mock = MagicMock(spec=KisClient)
 
-    # 20 target stocks were scheduled on 2026-10-30
-    for i in range(1, 21):
-        store.insert_order(
-            {
-                "rebalance_date": "2026-10-30",
-                "ticker": f"0000{i:02d}",
-                "side": "BUY",
-                "qty": 50,
-                "price": 10000.0,
-                "status": "ORDERED",
-                "env": "mock",
-            }
-        )
+    # Orders exist but none with status PENDING_CATCHUP
+    store.insert_order(
+        {
+            "rebalance_date": "2026-10-30",
+            "ticker": "000001",
+            "side": "BUY",
+            "qty": 50,
+            "price": 10000.0,
+            "status": "ORDERED",
+            "env": "mock",
+        }
+    )
 
-    # Broker has 19 stocks held, 000020 is missing
-    held_positions = [
-        Position(
-            ticker=f"0000{i:02d}",
-            name=f"종목_{i:02d}",
-            qty=50,
-            current_price=10000.0,
-            eval_amount=500_000.0,
-        )
-        for i in range(1, 20)  # 1 to 19 held, 20 is missing
-    ]
+    rebalancer = LiveRebalancer(
+        store=store,
+        kis_client=kis_mock,
+        notifier=notifier,
+        env="mock",
+        strategy_mode="seasonality",
+    )
+
+    result = rebalancer.catchup_unfilled_orders(as_of_date="2026-11-02", dry_run=False)
+
+    assert result["success"] is True
+    assert result["count"] == 0
+    assert result["orders"] == []
+    assert "보충 매수 대상 큐(PENDING_CATCHUP)가 없습니다." in result["message"]
+    # Verify no broker balance fetch or order placement occurred
+    assert kis_mock.fetch_balance.call_count == 0
+    assert kis_mock.place_order.call_count == 0
+
+
+def test_catchup_executes_pending_order_and_resolves(store):
+    """Test when 1 stock has status PENDING_CATCHUP, catchup executes 1 buy and marks RESOLVED."""
+    notifier = DiscordNotifier(mock_mode=True)
+    kis_mock = MagicMock(spec=KisClient)
+
+    # Insert order with PENDING_CATCHUP status
+    order_id = store.insert_order(
+        {
+            "rebalance_date": "2026-10-30",
+            "ticker": "000020",
+            "side": "BUY",
+            "qty": 50,
+            "price": 10000.0,
+            "status": "PENDING_CATCHUP",
+            "env": "mock",
+        }
+    )
 
     kis_mock.fetch_balance.return_value = Balance(
         cash=600_000.0,
-        total_eval_amount=10_100_000.0,
-        positions=held_positions,
+        total_eval_amount=10_000_000.0,
+        positions=[],
     )
     kis_mock.fetch_current_price.return_value = 10000.0
 
@@ -196,14 +220,18 @@ def test_catchup_unfilled_orders_buys_unfilled_stock(store):
     assert ticker == "000020"
     assert side == "BUY"
     assert qty > 0
-    # +5% limit price of 10,000 is 10,500
-    assert price == 10500.0
+    assert price == 10500.0  # +5%
     assert order_type == "00"
 
-    # Verify order logged in DB
-    orders_in_db = store.get_orders(rebalance_date="2026-11-02", env="mock")
-    assert len(orders_in_db) == 1
-    assert orders_in_db["ticker"].iloc[0] == "000020"
+    # Verify status changed to RESOLVED in DB
+    orders_df = store.get_orders(env="mock")
+    target_row = orders_df[orders_df["id"] == order_id]
+    assert len(target_row) == 1
+    assert target_row["status"].iloc[0] == "RESOLVED"
+
+    # Verify PENDING_CATCHUP queue is now empty
+    pending_left = store.get_orders(env="mock", status="PENDING_CATCHUP")
+    assert pending_left.empty
 
     # Verify Discord notification
     assert len(notifier.sent_messages) == 1
@@ -211,163 +239,86 @@ def test_catchup_unfilled_orders_buys_unfilled_stock(store):
     assert "📢 [미체결 잔여 종목 보충 매수]" in embed["title"]
 
 
-def test_catchup_skips_dangerous_designated_stocks(store):
-    """Test that designated dangerous stocks (관리/투자주의환기종목) are skipped."""
+def test_catchup_fails_marks_expired_and_notifies_discord(store):
+    """Test when catchup order fails, status becomes EXPIRED (no rollover) and Discord alert is sent."""
     notifier = DiscordNotifier(mock_mode=True)
     kis_mock = MagicMock(spec=KisClient)
 
-    for i in range(1, 21):
-        store.insert_order(
-            {
-                "rebalance_date": "2026-10-30",
-                "ticker": f"0000{i:02d}",
-                "side": "BUY",
-                "qty": 50,
-                "price": 10000.0,
-                "status": "ORDERED",
-                "env": "mock",
-            }
-        )
-
-    # 000020 is missing from held positions
-    held_positions = [
-        Position(
-            ticker=f"0000{i:02d}",
-            name=f"종목_{i:02d}",
-            qty=50,
-            current_price=10000.0,
-            eval_amount=500_000.0,
-        )
-        for i in range(1, 20)
-    ]
-
-    kis_mock.fetch_balance.return_value = Balance(
-        cash=600_000.0,
-        total_eval_amount=10_100_000.0,
-        positions=held_positions,
-    )
-    kis_mock.fetch_current_price.return_value = 10000.0
-
-    # Mark 000020 as 관리종목 in designations table
-    store.upsert_designations(
-        [
-            {
-                "ticker": "000020",
-                "type": "관리종목",
-                "start_date": "2026-11-01",
-                "end_date": None,
-            }
-        ]
-    )
-
-    rebalancer = LiveRebalancer(
-        store=store,
-        kis_client=kis_mock,
-        notifier=notifier,
-        env="mock",
-        strategy_mode="seasonality",
-    )
-
-    result = rebalancer.catchup_unfilled_orders(as_of_date="2026-11-02", dry_run=False)
-
-    assert result["success"] is True
-    assert result["count"] == 0
-    assert len(result["orders"]) == 0
-    assert kis_mock.place_order.call_count == 0
-
-
-def test_catchup_skips_parking_period(store):
-    """Test that parking period (5~10월) skips catchup."""
-    notifier = DiscordNotifier(mock_mode=True)
-    kis_mock = MagicMock(spec=KisClient)
-
-    rebalancer = LiveRebalancer(
-        store=store,
-        kis_client=kis_mock,
-        notifier=notifier,
-        env="mock",
-        strategy_mode="seasonality",
-    )
-
-    result = rebalancer.catchup_unfilled_orders(as_of_date="2026-06-15", dry_run=False)
-
-    assert result["success"] is True
-    assert result["count"] == 0
-    assert len(result["orders"]) == 0
-    assert kis_mock.fetch_balance.call_count == 0
-
-
-def test_catchup_no_orders_when_all_20_stocks_held(store):
-    """Test when all 20 stocks are held, no orders are sent."""
-    notifier = DiscordNotifier(mock_mode=True)
-    kis_mock = MagicMock(spec=KisClient)
-
-    for i in range(1, 21):
-        store.insert_order(
-            {
-                "rebalance_date": "2026-10-30",
-                "ticker": f"0000{i:02d}",
-                "side": "BUY",
-                "qty": 50,
-                "price": 10000.0,
-                "status": "ORDERED",
-                "env": "mock",
-            }
-        )
-
-    # All 20 held
-    held_positions = [
-        Position(
-            ticker=f"0000{i:02d}",
-            name=f"종목_{i:02d}",
-            qty=50,
-            current_price=10000.0,
-            eval_amount=500_000.0,
-        )
-        for i in range(1, 21)
-    ]
-
-    kis_mock.fetch_balance.return_value = Balance(
-        cash=50_000.0,
-        total_eval_amount=10_050_000.0,
-        positions=held_positions,
-    )
-
-    rebalancer = LiveRebalancer(
-        store=store,
-        kis_client=kis_mock,
-        notifier=notifier,
-        env="mock",
-        strategy_mode="seasonality",
-    )
-
-    result = rebalancer.catchup_unfilled_orders(as_of_date="2026-11-02", dry_run=False)
-
-    assert result["success"] is True
-    assert result["count"] == 0
-    assert len(result["orders"]) == 0
-    assert kis_mock.place_order.call_count == 0
-
-
-def test_catchup_insufficient_cash(store):
-    """Test that insufficient cash prevents catchup orders and notifies Discord."""
-    notifier = DiscordNotifier(mock_mode=True)
-    kis_mock = MagicMock(spec=KisClient)
-
-    # Target stock 000020 missing
-    store.insert_order(
+    order_id = store.insert_order(
         {
             "rebalance_date": "2026-10-30",
             "ticker": "000020",
             "side": "BUY",
             "qty": 50,
             "price": 10000.0,
-            "status": "ORDERED",
+            "status": "PENDING_CATCHUP",
             "env": "mock",
         }
     )
 
-    # Cash is 0
+    kis_mock.fetch_balance.return_value = Balance(
+        cash=600_000.0,
+        total_eval_amount=10_000_000.0,
+        positions=[],
+    )
+    kis_mock.fetch_current_price.return_value = 10000.0
+    kis_mock.place_order.return_value = OrderResult(
+        order_no="",
+        ticker="000020",
+        side="BUY",
+        qty=50,
+        price=10500.0,
+        success=False,
+        message="증거금 부족 / 상한가 초과",
+    )
+
+    rebalancer = LiveRebalancer(
+        store=store,
+        kis_client=kis_mock,
+        notifier=notifier,
+        env="mock",
+        strategy_mode="seasonality",
+        buy_buffer_pct=0.05,
+    )
+
+    result = rebalancer.catchup_unfilled_orders(as_of_date="2026-11-02", dry_run=False)
+
+    assert result["success"] is True
+    assert result["count"] == 0
+
+    # Verify order is marked EXPIRED (queue completely destroyed, no rollover)
+    orders_df = store.get_orders(env="mock")
+    target_row = orders_df[orders_df["id"] == order_id]
+    assert len(target_row) == 1
+    assert target_row["status"].iloc[0] == "EXPIRED"
+
+    # Queue is completely cleared
+    pending_left = store.get_orders(env="mock", status="PENDING_CATCHUP")
+    assert pending_left.empty
+
+    # Verify Discord notification for final failure
+    assert len(notifier.sent_messages) == 1
+    embed = notifier.sent_messages[0]["embeds"][0]
+    assert "⚠️ [보충 매수 최종 실패]" in embed["title"]
+
+
+def test_catchup_insufficient_cash_marks_expired(store):
+    """Test that insufficient cash marks PENDING_CATCHUP orders EXPIRED and notifies final failure."""
+    notifier = DiscordNotifier(mock_mode=True)
+    kis_mock = MagicMock(spec=KisClient)
+
+    order_id = store.insert_order(
+        {
+            "rebalance_date": "2026-10-30",
+            "ticker": "000020",
+            "side": "BUY",
+            "qty": 50,
+            "price": 10000.0,
+            "status": "PENDING_CATCHUP",
+            "env": "mock",
+        }
+    )
+
     kis_mock.fetch_balance.return_value = Balance(
         cash=0.0,
         total_eval_amount=0.0,
@@ -384,10 +335,98 @@ def test_catchup_insufficient_cash(store):
 
     result = rebalancer.catchup_unfilled_orders(as_of_date="2026-11-02", dry_run=False)
 
-    assert result["success"] is False
     assert result["count"] == 0
-    assert "예수금 부족" in result["message"]
-    assert any("예수금 부족으로 보충 매수 불가" in msg.get("content", "") for msg in notifier.sent_messages)
+    orders_df = store.get_orders(env="mock")
+    target_row = orders_df[orders_df["id"] == order_id]
+    assert target_row["status"].iloc[0] == "EXPIRED"
+
+    # Discord alert sent
+    assert len(notifier.sent_messages) == 1
+    embed = notifier.sent_messages[0]["embeds"][0]
+    assert "⚠️ [보충 매수 최종 실패]" in embed["title"]
+
+
+def test_execute_records_pending_catchup_on_buy_failure(store):
+    """Test that when a BUY order fails during execute(), it is logged as PENDING_CATCHUP."""
+    notifier = DiscordNotifier(mock_mode=True)
+    kis_mock = MagicMock(spec=KisClient)
+
+    kis_mock.fetch_balance.return_value = Balance(
+        cash=1_000_000.0,
+        total_eval_amount=1_000_000.0,
+        positions=[],
+    )
+    kis_mock.fetch_current_price.return_value = 10000.0
+    # Simulate BUY order failure
+    kis_mock.place_order.return_value = OrderResult(
+        order_no="",
+        ticker="000001",
+        side="BUY",
+        qty=10,
+        price=10500.0,
+        success=False,
+        message="호가 한도 초과 거절",
+    )
+
+    rebalancer = LiveRebalancer(
+        store=store,
+        kis_client=kis_mock,
+        notifier=notifier,
+        env="mock",
+        strategy_mode="seasonality",
+    )
+
+    result = rebalancer.execute(
+        rebalance_date="2026-10-30",
+        pit_date="2026-10-30",
+        universe_kwargs={"market_cap_quantile": 1.0},
+    )
+
+    assert result["success"] is True
+    # Verify in DB that failed BUY orders have status PENDING_CATCHUP
+    failed_buys = store.get_orders(rebalance_date="2026-10-30", env="mock", status="PENDING_CATCHUP")
+    assert len(failed_buys) > 0
+
+
+def test_retry_unfilled_orders_marks_unfilled_buy_as_pending_catchup(store):
+    """Test that retry_unfilled_orders marks 15:35 unfilled/cancelled BUY orders as PENDING_CATCHUP."""
+    order_id = store.insert_order(
+        {
+            "rebalance_date": "2026-10-30",
+            "ticker": "000015",
+            "side": "BUY",
+            "qty": 50,
+            "price": 10000.0,
+            "status": "ORDERED",
+            "filled_qty": 0,
+            "env": "mock",
+        }
+    )
+
+    kis_mock = MagicMock(spec=KisClient)
+    # Broker reports CANCELLED with filled_qty = 0
+    kis_mock.fetch_orders.return_value = [
+        {
+            "ticker": "000015",
+            "status": "CANCELLED",
+            "filled_qty": 0,
+        }
+    ]
+
+    rebalancer = LiveRebalancer(
+        store=store,
+        kis_client=kis_mock,
+        env="mock",
+    )
+
+    updated = rebalancer.retry_unfilled_orders(date="2026-10-30")
+    assert len(updated) == 1
+    assert updated[0]["status"] == "PENDING_CATCHUP"
+
+    # Verify DB
+    orders_df = store.get_orders(env="mock")
+    row = orders_df[orders_df["id"] == order_id]
+    assert row["status"].iloc[0] == "PENDING_CATCHUP"
 
 
 def test_main_cli_rebalance_catchup_integration(monkeypatch, store):

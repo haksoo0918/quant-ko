@@ -1484,7 +1484,7 @@ def test_catchup_unfilled_orders_skips_when_20_stocks_held(store):
 
     res = rebalancer.catchup_unfilled_orders(as_of_date="2026-11-02")
     assert res["success"] is True
-    assert "정상 보유 중" in res["message"] or "미체결 없음" in res["message"]
+    assert "보충 매수 대상 큐(PENDING_CATCHUP)가 없습니다." in res["message"]
     assert res["orders"] == []
     assert kis_mock.place_order.call_count == 0
 
@@ -1502,7 +1502,7 @@ def test_catchup_unfilled_orders_buys_missing_stock_within_cash(store):
             "side": "BUY",
             "qty": 50,
             "price": 10000,
-            "status": "ORDERED",
+            "status": "FILLED",
             "filled_qty": 50,
             "env": "real",
         }
@@ -1514,7 +1514,7 @@ def test_catchup_unfilled_orders_buys_missing_stock_within_cash(store):
             "side": "BUY",
             "qty": 20,
             "price": 20000,
-            "status": "ORDERED",
+            "status": "PENDING_CATCHUP",
             "filled_qty": 0,
             "env": "real",
         }
