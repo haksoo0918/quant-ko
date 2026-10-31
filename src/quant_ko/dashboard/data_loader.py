@@ -120,7 +120,7 @@ def _effective_order_qty(row: pd.Series | dict[str, Any]) -> int:
 
 def load_account_and_positions(
     db_path: str | Path = "data/quant_ko.db",
-    fetch_live_kis: bool = True,
+    fetch_live_kis: bool = False,
     initial_capital: float = 10_000_000.0,
 ) -> dict[str, Any]:
     """계좌 요약 정보와 현재 보유 종목 포트폴리오를 로드합니다.
@@ -219,7 +219,7 @@ def load_account_and_positions(
                     )
 
                 positions_list.sort(key=lambda x: x["eval_amount"], reverse=True)
-# 미입금/운용 대기 상태 감지: 보유 종목이 없고 과거 체결 주문도 없으며 잔고가 초기자본의 10% 미만인 경우
+                # 미입금/운용 대기 상태 감지: 보유 종목이 없고 과거 체결 주문도 없으며 잔고가 초기자본의 10% 미만인 경우
                 is_unfunded = (
                     len(positions_list) == 0
                     and total_orders_count == 0
@@ -252,6 +252,7 @@ def load_account_and_positions(
                     "total_orders_count": total_orders_count,
                     "positions": positions_list,
                     "positions_df": pd.DataFrame(positions_list),
+                    "synced_at": datetime.now().strftime("%H:%M"),
                 }
         except Exception as exc:
             logger.info("KIS 실시간 잔고 조회 실패 (SQLite 오프라인 폴백 전환): %s", exc)
@@ -297,9 +298,7 @@ def load_account_and_positions(
     stock_value = 0.0
     for ticker in active_tickers:
         qty = holdings_qty[ticker]
-        avg_price = (
-            holdings_cost[ticker] / qty if qty > 0 else last_order_price.get(ticker, 0.0)
-        )
+        avg_price = holdings_cost[ticker] / qty if qty > 0 else last_order_price.get(ticker, 0.0)
         cur_price = latest_prices.get(ticker) or last_order_price.get(ticker, avg_price)
         eval_amt = float(qty * cur_price)
         stock_value += eval_amt
@@ -336,9 +335,7 @@ def load_account_and_positions(
 
     for item in positions_list:
         item["weight_pct"] = (
-            round((item["eval_amount"] / total_equity) * 100.0, 2)
-            if total_equity > 0
-            else 0.0
+            round((item["eval_amount"] / total_equity) * 100.0, 2) if total_equity > 0 else 0.0
         )
 
     positions_list.sort(key=lambda x: x["eval_amount"], reverse=True)
@@ -358,6 +355,7 @@ def load_account_and_positions(
         "total_orders_count": total_orders_count,
         "positions": positions_list,
         "positions_df": pd.DataFrame(positions_list),
+        "synced_at": None,
     }
 
 
@@ -413,9 +411,7 @@ def build_account_equity_curve(
             columns=columns,
         )
 
-    exec_orders["norm_date"] = exec_orders["rebalance_date"].apply(
-        lambda d: normalize_date(str(d))
-    )
+    exec_orders["norm_date"] = exec_orders["rebalance_date"].apply(lambda d: normalize_date(str(d)))
     first_date = str(exec_orders["norm_date"].min())
 
     try:
@@ -485,9 +481,7 @@ def build_account_equity_curve(
             qty * last_known_price.get(t, 0.0) for t, qty in holdings.items() if qty > 0
         )
         tot_eq = cash + stock_val
-        ret_pct = (
-            ((tot_eq / initial_capital) - 1.0) * 100.0 if initial_capital > 0 else 0.0
-        )
+        ret_pct = ((tot_eq / initial_capital) - 1.0) * 100.0 if initial_capital > 0 else 0.0
 
         records.append(
             {
@@ -651,12 +645,8 @@ def load_top20_preview(
     ]
     present_val = [c for c in val_cols if c in out.columns]
     present_gro = [c for c in gro_cols if c in out.columns]
-    out["밸류순위평균"] = (
-        out[present_val].mean(axis=1).round(1) if present_val else 0.0
-    )
-    out["성장순위평균"] = (
-        out[present_gro].mean(axis=1).round(1) if present_gro else 0.0
-    )
+    out["밸류순위평균"] = out[present_val].mean(axis=1).round(1) if present_val else 0.0
+    out["성장순위평균"] = out[present_gro].mean(axis=1).round(1) if present_gro else 0.0
 
     return (target_date, universe_count, out)
 
@@ -887,22 +877,16 @@ def load_long_term_backtest_series(
     for year, group in df_temp.groupby("year"):
         strat_first = group["strategy_equity"].iloc[0]
         strat_last = group["strategy_equity"].iloc[-1]
-        strat_ret = (
-            ((strat_last - strat_first) / strat_first * 100.0) if strat_first > 0 else 0.0
-        )
+        strat_ret = ((strat_last - strat_first) / strat_first * 100.0) if strat_first > 0 else 0.0
 
         kospi_first = group["kospi_equity"].iloc[0]
         kospi_last = group["kospi_equity"].iloc[-1]
-        kospi_ret = (
-            ((kospi_last - kospi_first) / kospi_first * 100.0) if kospi_first > 0 else 0.0
-        )
+        kospi_ret = ((kospi_last - kospi_first) / kospi_first * 100.0) if kospi_first > 0 else 0.0
 
         kosdaq_first = group["kosdaq_equity"].iloc[0]
         kosdaq_last = group["kosdaq_equity"].iloc[-1]
         kosdaq_ret = (
-            ((kosdaq_last - kosdaq_first) / kosdaq_first * 100.0)
-            if kosdaq_first > 0
-            else 0.0
+            ((kosdaq_last - kosdaq_first) / kosdaq_first * 100.0) if kosdaq_first > 0 else 0.0
         )
 
         excess_kospi = strat_ret - kospi_ret
@@ -921,7 +905,11 @@ def load_long_term_backtest_series(
     final_eq = float(df["strategy_equity"].iloc[-1])
     tot_ret = ((final_eq - init_eq) / init_eq * 100.0) if init_eq > 0 else 0.0
     years_cnt = len(df) / 250.0
-    cagr = (((final_eq / init_eq) ** (1.0 / years_cnt) - 1.0) * 100.0) if (init_eq > 0 and years_cnt > 0) else 0.0
+    cagr = (
+        (((final_eq / init_eq) ** (1.0 / years_cnt) - 1.0) * 100.0)
+        if (init_eq > 0 and years_cnt > 0)
+        else 0.0
+    )
     mdd = float(df["strategy_dd"].min()) if "strategy_dd" in df.columns else -40.08
 
     return {

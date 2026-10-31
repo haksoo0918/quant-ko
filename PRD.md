@@ -241,6 +241,11 @@ tests/
 ### 6.1 실전 계좌(`REAL`) 전환 및 오라클 서버 배포 5대 체크리스트
 1. **① `.env` 실계좌 설정**: `KIS_MODE=REAL` 및 `KIS_REAL_APP_KEY`, `KIS_REAL_APP_SECRET`, `KIS_REAL_CANO` (계좌 앞 8자리), `KIS_REAL_ACNT_PRDT_CD=01`, `DISCORD_WEBHOOK_URL` 설정 확인
 2. **② 크론탭 `--env real --strategy seasonality` 및 `git pull origin main`**: OCI 서버 크론탭에서 매매 실행 전 `(git pull origin main >> deploy.log 2>&1 || true)` 가 선행되고 `--env real --strategy seasonality` 옵션으로 기동되는지 확인
-3. **③ 한투 토큰 캐시 파일 유지**: 프로젝트 루트 절대경로 기반 `data/kis_token_real.json` 파일이 유지되어 24시간 내 불필요한 토큰 재발급(1분당 1회 제한 `EGW00133`)이 발생하지 않는지 확인
+3. **③ 한투 토큰 캐시 파일 유지 및 1일 1회 발급 보장**: 프로젝트 루트 절대경로 기반 `data/kis_token_real.json` 파일 유지, `kis.py`의 파일 저장 예외 은폐 제거(`pass` 금지) 및 상세 로깅, 08:30 감시 봇 발급 토큰을 15:20 리밸런싱에서 100% 재사용
 4. **④ SQLite DB 최신 시세/재무 정합성**: `data/oci_db_patch.json.gz` 자동 병합(`apply_oci_db_patch_if_needed`)을 통해 `companies` (2,872건), `financials` (25,882건), `daily_prices` 최신 시세가 정상 반영되었는지 확인
 5. **⑤ 15:20 동시호가 +5% 지정가 주문**: 매수 시 상한가(+30%) 증거금 잠김을 방지하고 당일 15:30 종가로 100% 체결되도록 **현재가 +5% 지정가 (`ORD_DVSN="00"`, 상한가 `stck_mxpr` 캡 및 1주 감량 자동 재시도 포함)** 가 작동하는지 확인
+
+### 7.4 대시보드 KIS 토큰 다중 발급 방지 및 잔고 동기화 명세
+1. **기본 조회 정책 (DB 오프라인 우선)**: 대시보드 페이지 최초 접속 및 새로고침 시 무분별한 KIS API 토큰 발급(`fetch_live_kis=True`)을 전면 중단하고, OCI 서버 매매 봇이 동기화한 SQLite DB(`orders` 체결 기록 + `daily_prices`) 기반 잔고를 기본 표기 (`fetch_live_kis=False`).
+2. **수동 동기화 UI (On-Demand Sync)**: 대시보드 상단 배너에 `[🔄 KIS 실시간 잔고 동기화]` 버튼을 배치하여, 사용자가 명시적으로 클릭했을 때만 1회 KIS API를 호출하도록 제한.
+3. **Streamlit 세션/시간 캐시 보호**: 수동 동기화 호출 시에도 Streamlit 캐시(`st.cache_data`, TTL 3,600초)를 적용하여 동일 세션 내 반복 클릭 또는 새로고침에 따른 중복 토큰 요청 및 알림톡 발송 차단.
