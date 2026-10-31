@@ -30,14 +30,18 @@
 
 ### ☁️ 오라클 클라우드 프리티어(OCI Always Free) 무인 배포
 > **목적**: 로컬 PC 전원 의존(15:20 PC 켜두기)을 완전히 없애고, 24시간 365일 무인 자동매매/모니터링 구현 완료.  
-> **운영 서버**: `ubuntu@161.33.140.237` (Tokyo 리전, Ubuntu 24.04, Python 3.12 venv)
+> **운영 서버**: `ubuntu@161.33.140.237` (Tokyo 리전, Ubuntu 24.04)  
+> **프로젝트 루트 경로**: `/home/ubuntu/quant-ko`  
+> **가상환경 파이썬 절대경로**: `/home/ubuntu/quant-ko/.venv/bin/python`  
+> **등록된 크론탭(`crontab -l`) 실제 구성**:  
+> 1. `30 8 * * 1-5`: 평일 08:30 관리/환기종목 일일 감시 및 생존 확인 알림 (`--mode monitor --env real`)  
+> 2. `20 15 * * 1-5`: 평일 15:20 정기 리밸런싱 및 미체결 1회성 큐 자동 보충 매수 (`--mode rebalance --env real --strategy seasonality`)  
+> 3. `0 18 * * 1-5`: 평일 18:00 리밸런싱 전일(D-1) 사전 브리핑 알림 (`--mode preview --env real --strategy seasonality`)  
+> 4. `5 9 * * *`: 매일 09:05 비트코인 봇 기동 (`cd /home/ubuntu/quant-bitcoin && /usr/bin/python3 src/main.py --live`)
 
-- [x] **1. 서버 기본 환경 셋업**: 한국 시간(KST) 동기화, `quant-ko` 클론, 가상환경 및 패키지 설치 완료
+- [x] **1. 서버 기본 환경 셋업**: 한국 시간(KST) 동기화, `quant-ko` 클론, 가상환경(`/.venv`) 및 패키지 설치 완료
 - [x] **2. 환경변수 및 데이터베이스 파일 배치**: `.env` 및 10.5개년 실측 DB(`data/quant_ko.db`, 98MB) 이식 완료
-- [x] **3. 리눅스 크론탭(`crontab`) 365일 무인 스케줄 등록**:
-  - 평일 08:30 관리종목/환기종목 일일 감시 및 생존 확인 알림 (`--mode monitor`)
-  - 평일 15:20 월별 리밸런싱 장마감 시장가 자동 주문 (모의투자 상시 모드: `--mode rebalance --strategy standard`)
-  - 평일 18:00 리밸런싱 전일(D-1) 사전 브리핑 알림 (`--mode preview --strategy standard`)
+- [x] **3. 리눅스 크론탭(`crontab`) 365일 무인 스케줄 등록**: 위의 4대 크론탭 등록 완료
 - [x] **4. 크론탭 프로세스 장애 격리**: `git pull origin main` 실패 시에도 매매 봇이 중단되지 않도록 `(git pull origin main >> deploy.log 2>&1 || true) && ...` 구문 적용 완료
 - [x] **5. GitHub Actions CI 파이프라인 구축**: `ci.yml` (테스트 98개, Ruff 린트 자동 검증) 완료
 - [x] **6. Git 브랜치 보호 및 채팅 승인제**: `dev` 원격 푸시 원천 차단 및 `main` 머지/푸시 사용자 명시적 채팅 승인제 구축 완료
