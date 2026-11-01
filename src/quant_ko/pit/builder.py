@@ -1,4 +1,4 @@
-"""Point-in-Time financial statement snapshot builder."""
+"""Point-in-Time(시점 기준) 재무제표 스냅샷 생성 모듈 (선견 편향 제거)."""
 
 from typing import Any
 
@@ -8,7 +8,7 @@ from quant_ko.data.store import DataStore
 
 
 def _normalize_date_str(date_str: str) -> str:
-    """Normalize date string to YYYYMMDD format without dashes."""
+    """날짜 문자열을 하이픈 없는 YYYYMMDD 형식으로 정규화합니다."""
     return str(date_str).replace("-", "").strip()
 
 
@@ -17,7 +17,7 @@ BS_METRICS = ["total_liabilities", "total_equity", "capital_stock"]
 
 
 class PITSnapshotBuilder:
-    """Extracts Point-in-Time financial metrics without look-ahead bias."""
+    """공시접수일자(rcept_dt)를 기준으로 선견 편향(Look-ahead bias) 없는 시점 기준 재무 스냅샷을 생성합니다."""
 
     def __init__(self, store: DataStore) -> None:
         self.store = store
@@ -27,9 +27,10 @@ class PITSnapshotBuilder:
         corp_code: str,
         cutoff_dt: str,
     ) -> dict[tuple[int, int], dict[str, Any]]:
-        """Get best filing per (fiscal_year, quarter) up to cutoff_dt.
+        """기준일(cutoff_dt) 시점 이전에 공시된 (회계연도, 분기)별 최적의 보고서를 선택합니다.
 
-        Prefers CFS over OFS, and chooses the latest amendment (highest rcept_dt).
+        연결재무제표(CFS)를 별도재무제표(OFS)보다 우선하며, 기재정정 공시가 존재할 경우
+        가장 최근 공시접수일자(rcept_dt)의 보고서를 선택합니다.
         """
         df = self.store.get_financials(corp_code=corp_code, before_rcept_dt=cutoff_dt)
         if df.empty:
@@ -58,10 +59,10 @@ class PITSnapshotBuilder:
         fiscal_year: int,
         quarter: int,
     ) -> dict[str, float | None] | None:
-        """Calculate discrete quarterly income metrics for (fiscal_year, quarter).
+        """해당 (회계연도, 분기)의 순수 당해 분기(Discrete) 손익계산서 지표를 산출합니다.
 
-        For Q1, Q2, Q3: raw filing value.
-        For Q4: Annual (Q4 report) - sum(Q1..Q3 discrete).
+        1분기, 2분기, 3분기: 분기보고서에 공시된 수치를 그대로 사용합니다.
+        4분기: 연간 사업보고서(Q4) 수치에서 1~3분기 수치의 합을 차감하여 순수 4분기 실적을 복원합니다.
         """
         key = (fiscal_year, quarter)
         if key not in filings:
@@ -76,14 +77,14 @@ class PITSnapshotBuilder:
                 discrete[m] = float(val) if val is not None else None
             return discrete
 
-        # quarter == 4: Annual report
+        # quarter == 4: 사업보고서(연간 실적)
         for m in INCOME_METRICS:
             annual_val = filing.get(m)
             if annual_val is None:
                 discrete[m] = None
                 continue
 
-            # Sum available Q1, Q2, Q3
+            # 가용한 1~3분기 수치 합산
             prior_sum = 0.0
             found_prior = False
             for q in (1, 2, 3):
@@ -105,18 +106,18 @@ class PITSnapshotBuilder:
         corp_code: str,
         as_of_date: str,
     ) -> dict[str, Any] | None:
-        """Extract Point-in-Time financial record for a single company."""
+        """단일 기업의 특정 기준일자 시점 PIT 재무 지표(최근 분기 실적, TTM, YoY, 부채비율, 자본잠식률)를 산출합니다."""
         cutoff_dt = _normalize_date_str(as_of_date)
         filings = self._get_preferred_filings(corp_code, cutoff_dt)
         if not filings:
             return None
 
-        # Determine latest available quarter
+        # 기준일 시점 가장 최신 가용 분기 산출
         sorted_keys = sorted(filings.keys(), key=lambda x: (x[0], x[1]))
         latest_year, latest_qtr = sorted_keys[-1]
         latest_filing = filings[(latest_year, latest_qtr)]
 
-        # Discrete values for latest quarter
+        # 최신 분기 순수 당해 분기 실적 산출
         latest_discrete = self._get_discrete_quarter_metrics(filings, latest_year, latest_qtr)
         if not latest_discrete:
             return None
@@ -129,14 +130,14 @@ class PITSnapshotBuilder:
             "fs_type": latest_filing.get("fs_type", ""),
         }
 
-        # Latest quarter income metrics
+        # 최신 분기 손익 지표 설정
         for m in INCOME_METRICS:
             val = latest_discrete.get(m)
             result[f"{m}_quarter"] = val
             result[m] = val
 
-        # Calculate TTM (sum of latest 4 discrete quarters)
-        # Determine 4 quarters list
+        # TTM(최근 4개 분기 합산) 지표 산출
+        # 직전 4개 분기 목록 결정
         quarters_seq: list[tuple[int, int]] = []
         cur_y, cur_q = latest_year, latest_qtr
         for _ in range(4):
@@ -160,7 +161,7 @@ class PITSnapshotBuilder:
             else:
                 result[f"{m}_ttm"] = None
 
-        # Calculate YoY (Latest quarter vs same quarter previous year)
+        # YoY(전년 동기 대비 증감률) 및 흑자전환 여부 산출
         prev_discrete = self._get_discrete_quarter_metrics(filings, latest_year - 1, latest_qtr)
 
         for m in INCOME_METRICS:
@@ -183,12 +184,12 @@ class PITSnapshotBuilder:
                 result[f"{m}_yoy"] = None
                 result[f"{m}_turnaround"] = False
 
-        # Balance sheet metrics (from latest available report)
+        # 재무상태표 지표 (최신 가용 보고서 기준)
         for bs in BS_METRICS:
             val = latest_filing.get(bs)
             result[bs] = float(val) if val is not None else None
 
-        # Financial ratios
+        # 안정성 비율 (부채비율, 자본잠식률) 산출
         total_equity = result.get("total_equity")
         total_liabilities = result.get("total_liabilities")
         capital_stock = result.get("capital_stock")
@@ -220,11 +221,11 @@ class PITSnapshotBuilder:
         as_of_date: str,
         corp_codes: list[str] | None = None,
     ) -> pd.DataFrame:
-        """Build PIT financial snapshot for all companies or specified corp_codes."""
+        """전체 기업 또는 지정된 기업 목록의 기준일자 시점 PIT 재무 스냅샷 DataFrame을 생성합니다."""
         cutoff_dt = _normalize_date_str(as_of_date)
 
         if corp_codes is None:
-            # Query distinct corp_codes from financials table with rcept_dt <= cutoff_dt
+            # 기준일 이전 공시된 재무제표가 있는 고유 corp_code 조회
             fin_df = self.store.get_financials(before_rcept_dt=cutoff_dt)
             if fin_df.empty:
                 return pd.DataFrame()
@@ -243,7 +244,7 @@ class PITSnapshotBuilder:
 
         df_snap = pd.DataFrame(rows)
 
-        # Merge ticker from companies table if available
+        # companies 테이블에서 종목코드(ticker) 매핑 병합
         companies_df = self.store.get_companies()
         if not companies_df.empty and "corp_code" in companies_df.columns:
             code_to_ticker = (
@@ -253,5 +254,7 @@ class PITSnapshotBuilder:
                 .to_dict()
             )
             df_snap["ticker"] = df_snap["corp_code"].map(code_to_ticker)
+
+        return df_snap
 
         return df_snap

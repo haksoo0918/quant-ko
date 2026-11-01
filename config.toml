@@ -1,0 +1,9 @@
+# quant-ko 운영 및 전략 설정
+[strategy]
+mode = "seasonality"        # "seasonality" (11-4월 주식 / 5-10월 파킹) 또는 "standard" (연중 상시 투자)
+target_count = 20           # 보유 포트폴리오 목표 종목 수
+cash_buffer_ratio = 0.015   # 1.5% 안전 현금 버퍼
+
+[broker]
+default_env = "real"        # 기본 실행 환경: "real" 또는 "mock"
+order_type = "01"           # 매수 주문 구분: "01" (시장가 동시호가) 또는 "00" (지정가)

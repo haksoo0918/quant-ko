@@ -5,6 +5,26 @@
 
 ---
 
+## [1.6.0] - 2026-11-01
+
+### 추가 및 개선 (Added & Changed)
+- **`config.toml` 전략 설정 파일 및 동적 로더 도입 (`config.toml`, `src/quant_ko/config.py`, `src/quant_ko/main.py`)**:
+  - `.env`의 보안 비밀(API Key, 계좌번호 등)과 분리하여 전략 모드(계절성 ON/OFF) 및 운영 파라미터를 사용자가 직관적으로 관리할 수 있도록 프로젝트 루트에 `config.toml` 도입.
+  - Python 3.11+ 표준 내장 `tomllib` 기반으로 0의존성 설정 로더 및 기본값 딥 머지(Deep Merge)/폴백 구현.
+  - `main.py` CLI 인자 파서 기본값을 `config.toml` 값과 연동하여 CLI 옵션 생략 시에도 설정 파일 값이 자동 적용되도록 구현.
+- **코드베이스 전 모듈 한글 독스트링 및 주석 표준화 (`src/quant_ko/`)**:
+  - `backtest`, `broker`, `data`, `pit`, `strategy`, `notify`, `main` 등 소스 코드 전반의 영문 독스트링을 PEP 257 및 Google Style 한국어로 전면 개편.
+- **코드 품질 리팩토링 및 클린업**:
+  - `calendar.py`, `universe.py` 내 함수 내부 지연 임포트를 모듈 최상단으로 정리.
+  - 딕셔너리 순회(`SIM118`) 및 중첩 `if` 조건문 12건 간소화(`SIM102`).
+  - `universe.py` 내 결산월(`12`), 계절성 전환일(`25`), 시총 분위수(`0.20`) 등 6개 매직 넘버 상수화.
+  - 과거 1회성 스크립트 2건을 `scripts/archive/` 로 안전 아카이빙.
+- **PRD 및 README 전면 재정비 (`PRD.md`, `README.md`)**:
+  - [PRD.md](PRD.md) 목차(1-9장) 체계적 재배열, 누락된 실전 안전 장치(+5% 호가보정, 1주 감량, OCI DB 패치, 1회성 보충 매수, `config.toml`) 완전 동기화.
+  - [README.md](README.md) 아키텍처 및 빠른 시작 명령어 최신화.
+- **테스트 케이스 확충 (`tests/test_config.py`)**:
+  - `config.toml` 로더 및 CLI 연동 검증 단위 테스트 6종 추가, 총 158개 테스트 전원 통과(All-Green) 달성.
+
 ## [1.5.4] - 2026-11-01
 
 ### 추가 및 개선 (Added & Changed)

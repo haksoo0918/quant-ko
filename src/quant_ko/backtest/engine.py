@@ -1,4 +1,4 @@
-"""Backtest engine and execution models."""
+"""백테스트 시뮬레이션 엔진 및 주문 체결 모델."""
 
 import math
 from dataclasses import dataclass, field
@@ -22,7 +22,7 @@ from quant_ko.strategy.universe import filter_universe
 
 @dataclass
 class Trade:
-    """Represents an executed trade order."""
+    """체결된 매매 주문 내역."""
 
     date: str
     ticker: str
@@ -35,7 +35,7 @@ class Trade:
 
 @dataclass
 class RebalanceResult:
-    """Represents the result of a rebalance execution."""
+    """리밸런싱 실행 결과(현금, 보유 포지션, 체결 주문 목록, 회전율 등)."""
 
     date: str
     cash: float
@@ -53,22 +53,32 @@ def execute_rebalance(
     prices: dict[str, float],
     cost_rate: float = 0.003,
 ) -> RebalanceResult:
-    """Execute differential trading on rebalance date.
+    """리밸런싱일의 차등 매매(Differential Trading)를 시뮬레이션 실행합니다.
 
-    - Retained stocks only trade the delta difference between current target weight
-      and held position value.
-    - Sells are executed first to free cash.
-    - Buys are executed with floor integer share calculation and cost consideration.
-    - One-way transaction cost rate is applied to buy/sell turnover.
+    - 유지 종목은 목표 비중 평가액과 현재 보유 평가액 간의 차이(델타) 수량만 매매합니다.
+    - 현금 확보를 위해 매도 주문을 먼저 체결한 후 매수 주문을 체결합니다.
+    - 매수 시 정수(floor) 단위 수량 계산 및 매매 비용을 차감합니다.
+    - 매수/매도 거래대금에 편도 거래비용률을 적용합니다.
+
+    Args:
+        date: 리밸런싱 실행일 (YYYY-MM-DD).
+        current_cash: 리밸런싱 직전 보유 현금.
+        current_positions: 현재 보유 종목 및 수량 {ticker: shares}.
+        target_weights: 목표 편입 종목 및 목표 비중 {ticker: weight}.
+        prices: 당일 종가 매핑 {ticker: price}.
+        cost_rate: 편도 매매비용률 (기본값: 0.3%).
+
+    Returns:
+        리밸런싱 실행 결과(RebalanceResult).
     """
     norm_date = normalize_date(date)
     cash = float(current_cash)
     positions = {t: q for t, q in current_positions.items() if q > 0}
 
-    # Total portfolio equity before rebalancing
+    # 리밸런싱 직전 포트폴리오 총 평가액
     equity_before = cash + sum(positions.get(t, 0) * prices.get(t, 0.0) for t in positions)
 
-    # Determine desired target shares per target stock
+    # 목표 종목별 목표 보유 수량 산출
     desired_target_shares: dict[str, int] = {}
     for ticker, weight in target_weights.items():
         if weight <= 0:
@@ -81,11 +91,11 @@ def execute_rebalance(
         if target_shares > 0:
             desired_target_shares[ticker] = target_shares
 
-    # Identify sells and buys
+    # 매도 및 매수 필요 종목 식별
     sells: list[tuple[str, int, float]] = []
     buys: list[tuple[str, int, float]] = []
 
-    # Check all currently held positions
+    # 현재 보유 포지션 전수 점검
     for ticker, held_shares in positions.items():
         price = prices.get(ticker, 0.0)
         target_shares = desired_target_shares.get(ticker, 0)
@@ -94,7 +104,7 @@ def execute_rebalance(
         elif target_shares > held_shares:
             buys.append((ticker, target_shares - held_shares, price))
 
-    # Check target stocks not currently held
+    # 신규 편입 목표 종목 점검
     for ticker, target_shares in desired_target_shares.items():
         if ticker not in positions:
             price = prices.get(ticker, 0.0)
@@ -102,7 +112,7 @@ def execute_rebalance(
 
     trades: list[Trade] = []
 
-    # 1. Execute Sells first
+    # 1. 매도 주문 우선 체결 (현금 확보)
     for ticker, shares_to_sell, price in sells:
         if shares_to_sell <= 0 or price <= 0:
             continue
@@ -124,7 +134,7 @@ def execute_rebalance(
             )
         )
 
-    # 2. Execute Buys
+    # 2. 매수 주문 체결
     for ticker, delta_shares, price in buys:
         if delta_shares <= 0 or price <= 0:
             continue
@@ -163,12 +173,12 @@ def execute_rebalance(
 
 
 class EventTracker:
-    """Tracks in-period events: 관리종목, 투자주의환기, 거래정지, 상장폐지."""
+    """리밸런싱 주기 내 이벤트(관리종목, 투자주의환기, 거래정지, 상장폐지)를 추적하고 청산을 수행합니다."""
 
     LIQUIDATION_DESIGNATION_TYPES = {"관리", "투자주의환기", "거래정지"}
 
     def __init__(self) -> None:
-        # ticker -> date when newly flagged for liquidation
+        # 종목코드 -> 긴급 청산 대상으로 최초 지정된 일자
         self.flagged_dates: dict[str, str] = {}
 
     def process_day(
@@ -182,64 +192,74 @@ class EventTracker:
         delisted_tickers: set[str],
         cost_rate: float = 0.003,
     ) -> tuple[float, dict[str, int], list[Trade]]:
-        """Process in-period events for the day.
+        """당일 발생한 관리종목/환기종목/거래정지/상장폐지 이벤트를 처리합니다.
 
-        Returns updated (cash, positions, trades).
+        Args:
+            date: 당일 일자.
+            cash: 현재 현금.
+            positions: 현재 보유 포지션.
+            prices: 당일 종가 맵.
+            active_designations: 당일 활성 지정 내역 {ticker: set(types)}.
+            suspended_tickers: 거래정지 종목 집합.
+            delisted_tickers: 상장폐지 종목 집합.
+            cost_rate: 거래비용률.
+
+        Returns:
+            갱신된 (cash, positions, trades) 튜플.
         """
         norm_date = normalize_date(date)
         cash_val = float(cash)
         pos = dict(positions)
         trades: list[Trade] = []
 
-        # 1. Delisting check: any held stock delisted on or before today
+        # 1. 상장폐지 점검: 당일 이전 상장폐지된 보유 종목 전액 손실 처리 (보유 제거)
         for ticker in list(pos.keys()):
             if ticker in delisted_tickers:
                 del pos[ticker]
                 self.flagged_dates.pop(ticker, None)
 
-        # 2. Identify new designations for currently held stocks
+        # 2. 보유 종목 중 신규 특별 지정(관리/환기/거래정지) 발생 여부 식별
         for ticker in pos:
             if ticker not in self.flagged_dates:
                 desig_types = active_designations.get(ticker, set())
                 if desig_types & self.LIQUIDATION_DESIGNATION_TYPES:
                     self.flagged_dates[ticker] = norm_date
 
-        # 3. Attempt liquidation for flagged stocks that were flagged prior to today
+        # 3. 이전 영업일에 지정된 종목의 익일 시장 청산 시도 (거래정지 해제 및 시세 존재 시)
         for ticker in list(self.flagged_dates.keys()):
             if ticker not in pos:
                 self.flagged_dates.pop(ticker, None)
                 continue
 
             flagged_on = self.flagged_dates[ticker]
-            if flagged_on < norm_date:
-                # Can we sell today? Must not be suspended and must have positive price
-                if ticker not in suspended_tickers:
-                    price = prices.get(ticker, 0.0)
-                    if price > 0:
-                        shares = pos[ticker]
-                        trade_val = shares * price
-                        fee = trade_val * cost_rate
-                        cash_val += trade_val - fee
-                        trades.append(
-                            Trade(
-                                date=norm_date,
-                                ticker=ticker,
-                                side="SELL",
-                                shares=shares,
-                                price=price,
-                                trade_value=trade_val,
-                                fee=fee,
-                            )
+            # 당일 매도 가능 여부 점검: 거래정지가 아니며 유효 종가가 존재해야 함
+            if flagged_on < norm_date and ticker not in suspended_tickers:
+                price = prices.get(ticker, 0.0)
+                if price > 0:
+                    shares = pos[ticker]
+                    trade_val = shares * price
+                    fee = trade_val * cost_rate
+                    cash_val += trade_val - fee
+                    trades.append(
+                        Trade(
+                            date=norm_date,
+                            ticker=ticker,
+                            side="SELL",
+                            shares=shares,
+                            price=price,
+                            trade_value=trade_val,
+                            fee=fee,
                         )
-                        del pos[ticker]
-                        self.flagged_dates.pop(ticker, None)
+                    )
+                    del pos[ticker]
+                    self.flagged_dates.pop(ticker, None)
 
         return cash_val, pos, trades
 
 
 @dataclass
 class BacktestResult:
-    """Complete results from running a backtest simulation."""
+    """백테스트 시뮬레이션의 전체 결과(성과 지표, 자산 평가 이력, 매매 기록 등)."""
 
     metrics: PerformanceMetrics
     equity_history: pd.DataFrame
@@ -249,12 +269,12 @@ class BacktestResult:
     benchmarks: list[BenchmarkComparison] = field(default_factory=list)
 
     def generate_report(self, format_type: Literal["markdown", "text"] = "markdown") -> str:
-        """Generate markdown or plain-text performance report."""
+        """마크다운 또는 텍스트 형식의 백테스트 성과 보고서를 생성합니다."""
         return generate_report(self.metrics, self.benchmarks, format_type=format_type)
 
 
 class BacktestEngine:
-    """Backtesting simulator for the quantitative factor strategy."""
+    """퀀트 팩터 전략의 백테스트 시뮬레이터."""
 
     def __init__(
         self,
@@ -283,7 +303,17 @@ class BacktestEngine:
         benchmark_df: pd.DataFrame | None = None,
         benchmark_name: str = "KOSDAQ",
     ) -> BacktestResult:
-        """Execute the backtest over the specified date range."""
+        """지정된 기간 동안 백테스트 시뮬레이션을 실행합니다.
+
+        Args:
+            start_date: 백테스트 시작일 (선택 사항).
+            end_date: 백테스트 종료일 (선택 사항).
+            benchmark_df: 벤치마크 지수 일별 시세 DataFrame (선택 사항).
+            benchmark_name: 벤치마크 명칭 (기본값: "KOSDAQ").
+
+        Returns:
+            백테스트 시뮬레이션 종합 결과(BacktestResult).
+        """
         prices_all = self.store.get_daily_prices()
         if prices_all.empty:
             empty_metrics = calculate_metrics(pd.DataFrame(), initial_capital=self.initial_capital)
@@ -309,7 +339,7 @@ class BacktestEngine:
                 equity_history=pd.DataFrame(),
             )
 
-        # Get rebalancing schedule within range
+        # 기간 내 리밸런싱 일정 조회
         rebalance_events = get_rebalance_schedule(
             all_trading_days,
             start_date=start_date,
@@ -330,26 +360,26 @@ class BacktestEngine:
         event_tracker = EventTracker()
 
         for current_date in trading_days:
-            # Prices for current day
+            # 당일 종가 시세 조회
             day_prices = prices_all[prices_all["date"] == current_date]
             price_map = dict(
                 zip(day_prices["ticker"], day_prices["close"].astype(float), strict=False)
             )
 
-            # Active designations as of today
+            # 당일 기준 활성 특이종목 지정 내역
             active_desig_df = self.store.get_designations(as_of_date=current_date)
             active_desig_map: dict[str, set[str]] = {}
             if not active_desig_df.empty:
                 for _, row in active_desig_df.iterrows():
                     active_desig_map.setdefault(str(row["ticker"]), set()).add(str(row["type"]))
 
-            # Suspended tickers (explicit "거래정지" or zero/missing price)
+            # 거래정지 종목 (명시적 "거래정지" 또는 가격 0원 이하/누락)
             suspended_tickers: set[str] = {t for t, p in price_map.items() if p <= 0}
             for t, desigs in active_desig_map.items():
                 if "거래정지" in desigs:
                     suspended_tickers.add(t)
 
-            # Delisted tickers as of today
+            # 당일 기준 상장폐지 종목
             delisted_tickers: set[str] = set()
             if not companies_df.empty and "delisted_at" in companies_df.columns:
                 for _, row in companies_df.iterrows():
@@ -357,7 +387,7 @@ class BacktestEngine:
                     if d_at and normalize_date(str(d_at)) <= current_date:
                         delisted_tickers.add(str(row["ticker"]))
 
-            # 1. In-period events handling
+            # 1. 기간 내 이벤트(관리/환기/거래정지/상장폐지) 처리
             current_cash, current_positions, event_trades = event_tracker.process_day(
                 date=current_date,
                 cash=current_cash,
@@ -370,12 +400,12 @@ class BacktestEngine:
             )
             all_trades.extend(event_trades)
 
-            # 2. Rebalance check
+            # 2. 정기 리밸런싱 수행 여부 점검
             if current_date in reb_date_map:
                 event = reb_date_map[current_date]
                 prior_date = event.prior_date
 
-                # Strategy universe filtering using prior trading day data
+                # 직전 영업일(D-1) 시점 데이터 기준 유니버스 필터링
                 universe_df = filter_universe(
                     store=self.store,
                     as_of_date=prior_date,
@@ -383,7 +413,7 @@ class BacktestEngine:
                     market_cap_quantile=self.market_cap_quantile,
                 )
 
-                # Factor scoring and portfolio selection
+                # 팩터 점수 산출 및 포트폴리오 상위 종목 선정
                 selected_df = score_and_select(universe_df, top_n=self.top_n)
 
                 target_weights: dict[str, float] = {}
@@ -392,7 +422,7 @@ class BacktestEngine:
                         zip(selected_df["ticker"], selected_df["weight"], strict=False)
                     )
 
-                # Differential trading execution at today's close prices
+                # 당일 종가 기준 차등 매매 체결
                 reb_res = execute_rebalance(
                     date=current_date,
                     current_cash=current_cash,
@@ -420,7 +450,7 @@ class BacktestEngine:
                     }
                 )
 
-            # 3. Daily valuation tracking
+            # 3. 일별 포트폴리오 자산 가치 평가
             positions_val = sum(qty * price_map.get(t, 0.0) for t, qty in current_positions.items())
             total_equity = current_cash + positions_val
             equity_records.append(
@@ -437,6 +467,33 @@ class BacktestEngine:
                     "positions": dict(current_positions),
                 }
             )
+
+        equity_df = pd.DataFrame(equity_records)
+        metrics = calculate_metrics(
+            equity_history=equity_df,
+            rebalance_records=rebalance_records,
+            initial_capital=self.initial_capital,
+            risk_free_rate=self.risk_free_rate,
+        )
+
+        benchmarks: list[BenchmarkComparison] = []
+        if benchmark_df is not None and not benchmark_df.empty:
+            bench_comp = compare_benchmark(
+                portfolio_equity=equity_df,
+                benchmark_prices=benchmark_df,
+                benchmark_name=benchmark_name,
+                risk_free_rate=self.risk_free_rate,
+            )
+            benchmarks.append(bench_comp)
+
+        return BacktestResult(
+            metrics=metrics,
+            equity_history=equity_df,
+            trades=all_trades,
+            rebalance_records=rebalance_records,
+            daily_positions=daily_positions_records,
+            benchmarks=benchmarks,
+        )
 
         equity_df = pd.DataFrame(equity_records)
         metrics = calculate_metrics(

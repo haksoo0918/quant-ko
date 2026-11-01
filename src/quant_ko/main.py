@@ -1,14 +1,17 @@
-"""Main CLI Entrypoint for quant_ko production & mock operations.
+"""quant_ko 실전 및 모의투자 운영을 위한 메인 CLI 진입점.
 
-Usage:
-    # 1. Execute Monthly Rebalance (Live / Mock)
+사용법:
+    # 1. 정기 리밸런싱 실행 (모의 / 실전)
     python -m quant_ko.main --mode rebalance [--dry-run] [--date YYYY-MM-DD] [--env mock|real]
 
-    # 2. Execute Daily Designation Emergency Monitor
+    # 2. 일일 특이종목(관리/환기/거래정지) 긴급 모니터링 실행
     python -m quant_ko.main --mode monitor [--date YYYY-MM-DD] [--env mock|real]
 
-    # 3. Check Account Status & Strategy State
+    # 3. 계좌 잔고 및 전략 상태 점검
     python -m quant_ko.main --mode status [--env mock|real]
+
+    # 4. 리밸런싱 D-1 사전 브리핑 알림 전송
+    python -m quant_ko.main --mode preview [--date YYYY-MM-DD] [--env mock|real]
 """
 
 import argparse
@@ -20,6 +23,7 @@ from datetime import datetime
 from dotenv import load_dotenv
 
 from quant_ko.broker.kis import KisClient
+from quant_ko.config import load_config
 from quant_ko.data.krx import KrxClient
 from quant_ko.data.store import DataStore, apply_oci_db_patch_if_needed
 from quant_ko.live.monitor import DailyMonitor
@@ -39,16 +43,18 @@ logger = logging.getLogger("quant_ko.main")
 
 
 def get_current_date() -> str:
+    """현재 날짜를 'YYYY-MM-DD' 형식 문자열로 반환합니다."""
     return datetime.now().strftime("%Y-%m-%d")
 
 
 def print_status(kis_client: KisClient, env: str, date_str: str) -> None:
+    """현재 계좌 잔고, 보유 포지션 내역 및 전략 투자 구간(활성/대피) 상태를 출력합니다."""
     dt = datetime.strptime(date_str, "%Y-%m-%d")
     is_parking = is_seasonality_parking_period(date_str)
     season_desc = (
-        "5~10월 CD금리 ETF (안전 대피 구간)"
+        "5-10월 CD금리 ETF (안전 대피 구간)"
         if is_parking
-        else "11~4월 소형주 20종목 (적극 투자 구간)"
+        else "11-4월 소형주 20종목 (적극 투자 구간)"
     )
 
     print("\n" + "=" * 60)
@@ -78,7 +84,9 @@ def print_status(kis_client: KisClient, env: str, date_str: str) -> None:
 
 
 def main() -> None:
+    """명령줄 인자를 파싱하여 모드(status, monitor, preview, rebalance)에 따라 작업을 실행합니다."""
     load_dotenv()
+    cfg = load_config()
 
     parser = argparse.ArgumentParser(description="quant-ko Live / Mock Quantitative Trading CLI")
     parser.add_argument(
@@ -90,7 +98,7 @@ def main() -> None:
     parser.add_argument(
         "--env",
         choices=["mock", "real"],
-        default=os.getenv("KIS_MODE", "MOCK").lower(),
+        default=cfg["broker"]["default_env"],
         help="Broker environment: mock or real",
     )
     parser.add_argument(
@@ -107,13 +115,13 @@ def main() -> None:
     parser.add_argument(
         "--strategy",
         choices=["seasonality", "standard"],
-        default="seasonality",
+        default=cfg["strategy"]["mode"],
         help="Strategy mode: seasonality (Strategy 1) or standard",
     )
     parser.add_argument(
         "--order-type",
         choices=["01", "00"],
-        default="01",
+        default=cfg["broker"]["order_type"],
         help="Order division: '01' (market order / 시장가 15:20 동시호가 100%% 체결, default) or '00' (limit order / 지정가)",
     )
     parser.add_argument(
@@ -207,7 +215,7 @@ def main() -> None:
         if not args.force:
             trading_days = store.get_trading_days()
             if not rebalancer.is_rebalance_date(target_date, trading_days):
-                # 정기 리밸런싱일이 아닌 경우: 11~4월 활성 구간이면 미체결 잔여 종목 자동 보충 매수
+                # 정기 리밸런싱일이 아닌 경우: 11-4월 활성 구간이면 미체결 잔여 종목 자동 보충 매수
                 if not is_seasonality_parking_period(target_date):
                     catchup_res = rebalancer.catchup_unfilled_orders(
                         as_of_date=target_date,

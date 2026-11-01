@@ -1,4 +1,4 @@
-"""OpenDART API Client for fetching company info and financial statements."""
+"""OpenDART API 클라이언트 모듈 (기업 고유번호 매핑 및 분기/사업보고서 재무제표 수집)."""
 
 import io
 import re
@@ -18,7 +18,7 @@ REPRT_CODE_MAP = {
 
 
 def _clean_amount(val: Any) -> float | None:
-    """Parse raw financial statement number string into float."""
+    """재무제표 수치 문자열(쉼표, 음수 괄호 등)을 실수(float)로 변환합니다."""
     if val is None:
         return None
     if isinstance(val, (int, float)):
@@ -28,7 +28,7 @@ def _clean_amount(val: Any) -> float | None:
     if not s or s == "-":
         return 0.0
 
-    # Handle parenthesis format for negative values: "(1000)" -> "-1000"
+    # 음수 괄호 표기 처리: "(1000)" -> "-1000"
     if s.startswith("(") and s.endswith(")"):
         s = "-" + s[1:-1]
 
@@ -39,7 +39,7 @@ def _clean_amount(val: Any) -> float | None:
 
 
 class DartClient:
-    """Client for interacting with OpenDART API."""
+    """금융감독원 OpenDART REST API 연동 클라이언트."""
 
     def __init__(
         self,
@@ -53,7 +53,7 @@ class DartClient:
         self._corp_codes_cache: pd.DataFrame | None = None
 
     def fetch_corp_codes(self, only_listed: bool = True) -> pd.DataFrame:
-        """Download corpCode.xml zip file from OpenDART and parse into DataFrame."""
+        """OpenDART에서 corpCode.xml 압축파일을 내려받아 기업 고유번호 및 종목코드 매핑 DataFrame으로 파싱합니다."""
         url = f"{self.base_url}/corpCode.xml"
         params = {"crtfc_key": self.api_key}
 
@@ -88,7 +88,7 @@ class DartClient:
         return df
 
     def get_ticker_to_corp_code(self, only_listed: bool = True) -> dict[str, str]:
-        """Return mapping of stock ticker (6 digits) to OpenDART 8-digit corp_code."""
+        """상장 종목코드(6자리)를 OpenDART 8자리 기업 고유번호(corp_code)로 변환하는 매핑 딕셔너리를 반환합니다."""
         if self._corp_codes_cache is None:
             self.fetch_corp_codes(only_listed=only_listed)
         assert self._corp_codes_cache is not None
@@ -104,7 +104,7 @@ class DartClient:
         quarter: int,
         fs_type: str = "CFS",
     ) -> list[dict[str, Any]]:
-        """Fetch all financial statement accounts for a single company."""
+        """단일 기업의 특정 회계연도/분기 전체 재무제표 계정과목(fnlttSinglAcntAll)을 조회합니다."""
         reprt_code = REPRT_CODE_MAP.get(quarter)
         if not reprt_code:
             raise ValueError(f"Invalid quarter: {quarter}. Must be 1, 2, 3, or 4.")
@@ -137,7 +137,7 @@ class DartClient:
         fiscal_year: int,
         quarter: int,
     ) -> list[dict[str, Any]]:
-        """Fetch key financial accounts for multiple companies (up to 100)."""
+        """다중 기업(최대 100개)의 주요 재무제표 계정과목(fnlttMultiAcnt)을 일괄 조회합니다."""
         reprt_code = REPRT_CODE_MAP.get(quarter)
         if not reprt_code:
             raise ValueError(f"Invalid quarter: {quarter}. Must be 1, 2, 3, or 4.")
@@ -171,11 +171,11 @@ class DartClient:
         quarter: int,
         fs_type: str = "CFS",
     ) -> dict[str, Any] | None:
-        """Parse raw OpenDART items into standardized 7-metric record for financials table."""
+        """OpenDART 계정과목 응답 리스트로부터 7대 핵심 재무 지표를 추출하여 표준 레코드로 파싱합니다."""
         if not items:
             return None
 
-        # Extract rcept_dt
+        # 공시접수일자(rcept_dt) 추출
         rcept_dt = None
         for item in items:
             rcept_no = item.get("rcept_no", "")
@@ -207,44 +207,56 @@ class DartClient:
 
             # 1. 매출액
             if (
-                acc_id in ("ifrs-full_Revenue", "ifrs_Revenue", "dart_Revenue")
-                or "매출액" in norm_nm
-                or "수익(매출액)" in norm_nm
-            ) and sj_div in ("IS", "CIS", ""):
-                if revenue is None:
-                    revenue = amount
+                revenue is None
+                and (
+                    acc_id in ("ifrs-full_Revenue", "ifrs_Revenue", "dart_Revenue")
+                    or "매출액" in norm_nm
+                    or "수익(매출액)" in norm_nm
+                )
+                and sj_div in ("IS", "CIS", "")
+            ):
+                revenue = amount
 
             # 2. 매출총이익
             if (
-                acc_id in ("ifrs-full_GrossProfit", "dart_GrossProfit") or "매출총이익" in norm_nm
-            ) and sj_div in ("IS", "CIS", ""):
-                if gross_profit is None:
-                    gross_profit = amount
+                gross_profit is None
+                and (acc_id in ("ifrs-full_GrossProfit", "dart_GrossProfit") or "매출총이익" in norm_nm)
+                and sj_div in ("IS", "CIS", "")
+            ):
+                gross_profit = amount
 
             # 3. 영업이익
             if (
-                acc_id
-                in (
-                    "dart_OperatingIncomeLoss",
-                    "ifrs-full_OperatingProfit",
-                    "ifrs-full_OperatingIncomeLoss",
+                op_income is None
+                and (
+                    acc_id
+                    in (
+                        "dart_OperatingIncomeLoss",
+                        "ifrs-full_OperatingProfit",
+                        "ifrs-full_OperatingIncomeLoss",
+                    )
+                    or ("영업이익" in norm_nm and "영업외" not in norm_nm and "기타영업" not in norm_nm)
                 )
-                or ("영업이익" in norm_nm and "영업외" not in norm_nm and "기타영업" not in norm_nm)
-            ) and sj_div in ("IS", "CIS", ""):
-                if op_income is None:
-                    op_income = amount
+                and sj_div in ("IS", "CIS", "")
+            ):
+                op_income = amount
 
             # 4. 순이익 / 당기순이익-지배주주
-            # General fallback net income
+            # 기본 당기순이익 (지배주주 순이익 부재 시 대비)
             if (
-                acc_id in ("ifrs-full_ProfitLoss", "dart_ProfitLoss")
-                or norm_nm in ("당기순이익", "당기순손익", "당기순이익(손실)")
-            ) and sj_div in ("IS", "CIS", ""):
-                if fallback_net_income is None:
-                    fallback_net_income = amount
+                fallback_net_income is None
+                and (
+                    acc_id in ("ifrs-full_ProfitLoss", "dart_ProfitLoss")
+                    or norm_nm in ("당기순이익", "당기순손익", "당기순이익(손실)")
+                )
+                and sj_div in ("IS", "CIS", "")
+            ):
+                fallback_net_income = amount
 
-            if fs_type == "CFS":
-                if (
+            if (
+                fs_type == "CFS"
+                and net_income_owner is None
+                and (
                     acc_id
                     in (
                         "ifrs-full_ProfitLossAttributableToOwnersOfParent",
@@ -257,42 +269,51 @@ class DartClient:
                             for k in ("순이익", "당기순이익", "소유주지분", "지분순이익")
                         )
                     )
-                ) and sj_div in ("IS", "CIS", ""):
-                    if net_income_owner is None:
-                        net_income_owner = amount
-            else:
-                # In OFS (별도), owner profit is the entire net income
-                if (
+                )
+                and sj_div in ("IS", "CIS", "")
+            ):
+                net_income_owner = amount
+            elif (
+                fs_type != "CFS"
+                and net_income_owner is None
+                and (
                     acc_id
                     in ("ifrs-full_ProfitLoss", "ifrs-full_ProfitLossAttributableToOwnersOfParent")
                     or norm_nm in ("당기순이익", "당기순손익", "당기순이익(손실)")
-                ) and sj_div in ("IS", "CIS", ""):
-                    if net_income_owner is None:
-                        net_income_owner = amount
+                )
+                and sj_div in ("IS", "CIS", "")
+            ):
+                # 별도재무제표(OFS)의 경우 전체 당기순이익을 지배주주 순이익으로 간주
+                net_income_owner = amount
 
             # 5. 부채총계
             if (
-                acc_id in ("ifrs-full_Liabilities", "ifrs_Liabilities") or "부채총계" in norm_nm
-            ) and sj_div in ("BS", ""):
-                if total_liabilities is None:
-                    total_liabilities = amount
+                total_liabilities is None
+                and (acc_id in ("ifrs-full_Liabilities", "ifrs_Liabilities") or "부채총계" in norm_nm)
+                and sj_div in ("BS", "")
+            ):
+                total_liabilities = amount
 
             # 6. 자본총계
             if (
-                acc_id in ("ifrs-full_Equity", "ifrs_Equity") or "자본총계" in norm_nm
-            ) and sj_div in ("BS", ""):
-                if total_equity is None:
-                    total_equity = amount
+                total_equity is None
+                and (acc_id in ("ifrs-full_Equity", "ifrs_Equity") or "자본총계" in norm_nm)
+                and sj_div in ("BS", "")
+            ):
+                total_equity = amount
 
             # 7. 자본금
             if (
-                acc_id in ("ifrs-full_IssuedCapital", "ifrs_IssuedCapital")
-                or norm_nm in ("자본금", "보통주자본금", "납입자본")
-            ) and sj_div in ("BS", ""):
-                if capital_stock is None:
-                    capital_stock = amount
+                capital_stock is None
+                and (
+                    acc_id in ("ifrs-full_IssuedCapital", "ifrs_IssuedCapital")
+                    or norm_nm in ("자본금", "보통주자본금", "납입자본")
+                )
+                and sj_div in ("BS", "")
+            ):
+                capital_stock = amount
 
-        # Fallback for net_income_owner if CFS didn't report separate parent profit
+        # 연결재무제표에 지배주주 순이익이 명시되지 않은 경우 일반 당기순이익으로 대체
         if net_income_owner is None:
             net_income_owner = fallback_net_income
 
@@ -318,7 +339,7 @@ class DartClient:
         quarter: int,
         fs_type: str = "CFS",
     ) -> dict[str, Any] | None:
-        """Fetch statements from OpenDART and return parsed financial metrics record."""
+        """OpenDART에서 재무제표를 조회하고 7대 핵심 재무 지표 레코드로 파싱하여 반환합니다."""
         items = self.fetch_financial_statements(
             corp_code=corp_code,
             fiscal_year=fiscal_year,

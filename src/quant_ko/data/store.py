@@ -80,7 +80,7 @@ CREATE INDEX IF NOT EXISTS idx_orders_ticker ON orders(ticker);
 
 
 class DataStore:
-    """Manages SQLite database connections and schemas."""
+    """SQLite 데이터베이스 스키마 및 연결을 관리하는 데이터 저장소 클래스."""
 
     def __init__(self, db_path: str | Path = ":memory:") -> None:
         self.db_path = str(db_path)
@@ -89,7 +89,7 @@ class DataStore:
             self._shared_memory_conn = sqlite3.connect(":memory:")
 
     def close(self) -> None:
-        """Close database connection if open."""
+        """열려 있는 데이터베이스 연결을 닫습니다."""
         if self._shared_memory_conn is not None:
             try:
                 self._shared_memory_conn.close()
@@ -108,7 +108,7 @@ class DataStore:
 
     @contextmanager
     def get_connection(self) -> Generator[sqlite3.Connection, None, None]:
-        """Provide a transactional database connection context."""
+        """트랜잭션 처리를 위한 데이터베이스 커넥션 컨텍스트 매니저를 제공합니다."""
         if self._shared_memory_conn is not None:
             yield self._shared_memory_conn
         else:
@@ -119,13 +119,13 @@ class DataStore:
                 conn.close()
 
     def initialize_schema(self) -> None:
-        """Create tables and indices if they do not exist."""
+        """데이터베이스 테이블 및 인덱스가 존재하지 않는 경우 초기화 생성합니다."""
         with self.get_connection() as conn:
             conn.executescript(SCHEMA_SQL)
             conn.commit()
 
     def upsert_companies(self, records: list[dict[str, Any]] | pd.DataFrame) -> None:
-        """Insert or replace company metadata."""
+        """기업 기본 정보(종목코드, 고유번호, 시장, 섹터, 결산월, 스팩/우선주 여부 등)를 삽입하거나 갱신합니다."""
         if isinstance(records, pd.DataFrame):
             data = records.to_dict(orient="records")
         else:
@@ -153,7 +153,7 @@ class DataStore:
             is_preferred = excluded.is_preferred,
             is_spac = excluded.is_spac
         """
-        # Ensure default keys exist in all dicts
+        # 모든 레코드 딕셔너리에 기본 키와 기본값이 존재하도록 정규화
         normalized = []
         for r in data:
             row = dict(r)
@@ -173,7 +173,7 @@ class DataStore:
             conn.commit()
 
     def get_companies(self, tickers: list[str] | None = None) -> pd.DataFrame:
-        """Retrieve companies matching ticker filter or all."""
+        """기업 메타데이터 목록을 조회합니다 (종목코드 필터 선택 가능)."""
         with self.get_connection() as conn:
             if tickers:
                 placeholders = ",".join("?" for _ in tickers)
@@ -182,7 +182,7 @@ class DataStore:
             return pd.read_sql_query("SELECT * FROM companies", conn)
 
     def upsert_daily_prices(self, records: list[dict[str, Any]] | pd.DataFrame) -> None:
-        """Insert or replace daily stock prices."""
+        """일별 주가 시세(종가, 시가총액, 거래대금)를 삽입하거나 갱신합니다."""
         if isinstance(records, pd.DataFrame):
             data = records.to_dict(orient="records")
         else:
@@ -212,7 +212,7 @@ class DataStore:
         start_date: str | None = None,
         end_date: str | None = None,
     ) -> pd.DataFrame:
-        """Retrieve daily prices with optional ticker and date range filters."""
+        """일별 주가 시세 데이터를 조회합니다 (종목코드 및 기간 필터 선택 가능)."""
         query = "SELECT * FROM daily_prices WHERE 1=1"
         params: list[Any] = []
 
@@ -235,7 +235,7 @@ class DataStore:
         start_date: str | None = None,
         end_date: str | None = None,
     ) -> list[str]:
-        """Retrieve distinct trading days from daily_prices sorted ascending."""
+        """일별 주가 테이블에 기록된 고유 거래일 목록을 오름차순으로 조회합니다."""
         query = "SELECT DISTINCT date FROM daily_prices WHERE 1=1"
         params: list[Any] = []
         if start_date:
@@ -251,7 +251,7 @@ class DataStore:
             return [row[0] for row in cursor.fetchall()]
 
     def upsert_financials(self, records: list[dict[str, Any]] | pd.DataFrame) -> None:
-        """Insert or replace quarterly/annual financial statement metrics."""
+        """분기 및 사업보고서 재무제표 7대 주요 지표를 삽입하거나 갱신합니다."""
         if isinstance(records, pd.DataFrame):
             data = records.to_dict(orient="records")
         else:
@@ -291,7 +291,7 @@ class DataStore:
         fs_type: str | None = None,
         before_rcept_dt: str | None = None,
     ) -> pd.DataFrame:
-        """Query financial records with optional filters."""
+        """재무제표 레코드를 조회합니다 (고유번호, 회계연도, 분기, 재무제표 구분, 공시접수일 필터)."""
         query = "SELECT * FROM financials WHERE 1=1"
         params: list[Any] = []
 
@@ -317,7 +317,7 @@ class DataStore:
             return pd.read_sql_query(query, conn, params=params)
 
     def upsert_designations(self, records: list[dict[str, Any]] | pd.DataFrame) -> None:
-        """Insert or replace special issue designations (관리종목, 투자주의환기종목, 거래정지)."""
+        """특이종목 지정 이력(관리종목, 투자주의환기, 거래정지)을 삽입하거나 갱신합니다."""
         if isinstance(records, pd.DataFrame):
             data = records.to_dict(orient="records")
         else:
@@ -344,7 +344,7 @@ class DataStore:
         ticker: str | None = None,
         as_of_date: str | None = None,
     ) -> pd.DataFrame:
-        """Query designations with optional ticker and date filters."""
+        """특이종목 지정 내역을 조회합니다 (종목코드 및 기준일자 필터)."""
         query = "SELECT * FROM designations WHERE 1=1"
         params: list[Any] = []
 
@@ -361,7 +361,7 @@ class DataStore:
             return pd.read_sql_query(query, conn, params=params)
 
     def insert_order(self, order: dict[str, Any]) -> int:
-        """Insert a rebalance order record and return generated ID."""
+        """리밸런싱 매매 주문 기록을 등록하고 생성된 주문 ID를 반환합니다."""
         sql = """
         INSERT INTO orders (
             rebalance_date, ticker, side, qty, price, status, filled_qty, env
@@ -385,7 +385,7 @@ class DataStore:
         status: str,
         filled_qty: int | None = None,
     ) -> None:
-        """Update status and optionally filled_qty of an order."""
+        """주문 상태 및 체결 수량을 갱신합니다."""
         if filled_qty is not None:
             sql = "UPDATE orders SET status = ?, filled_qty = ? WHERE id = ?"
             params = (status, filled_qty, order_id)
@@ -403,7 +403,7 @@ class DataStore:
         env: str | None = None,
         status: str | None = None,
     ) -> pd.DataFrame:
-        """Query orders by rebalance date, environment, and status."""
+        """리밸런싱일자, 실행환경(mock/real), 주문상태 조건으로 주문 내역을 조회합니다."""
         query = "SELECT * FROM orders WHERE 1=1"
         params: list[Any] = []
 

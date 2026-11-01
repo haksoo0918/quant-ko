@@ -1,4 +1,4 @@
-"""Backtest simulator and performance reporter module."""
+"""백테스트 시뮬레이터 및 성과 분석 리포트 모듈."""
 
 from quant_ko.backtest.calendar import RebalanceEvent, get_rebalance_schedule
 from quant_ko.backtest.engine import (
