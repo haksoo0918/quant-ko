@@ -10,6 +10,7 @@ from __future__ import annotations
 import calendar
 import logging
 import os
+import pickle
 from datetime import date, datetime
 from pathlib import Path
 from typing import Any
@@ -179,6 +180,87 @@ def load_account_and_positions(
             client = KisClient()
             if client.app_key and client.app_secret and client.account_prefix:
                 balance = client.fetch_balance()
+
+                # 실전 브로커 체결 주문 내역 조회 및 SQLite orders 테이블 동기화
+                if hasattr(client, "fetch_orders"):
+                    try:
+                        broker_orders = client.fetch_orders()
+                        if broker_orders:
+                            existing_real = store.get_orders(env="real")
+                            for b_ord in broker_orders:
+                                ord_status = str(b_ord.get("status", "")).strip().upper()
+                                b_filled = int(b_ord.get("filled_qty") or 0)
+                                b_qty = int(
+                                    b_ord.get("order_qty")
+                                    or b_ord.get("qty")
+                                    or b_filled
+                                    or 0
+                                )
+                                if ord_status != "FILLED" and b_filled <= 0:
+                                    continue
+
+                                b_ticker = str(b_ord.get("ticker", "")).strip()
+                                b_side = str(b_ord.get("side", "")).strip().upper()
+                                if not b_ticker or not b_side:
+                                    continue
+
+                                b_price = float(
+                                    b_ord.get("order_price") or b_ord.get("price") or 0.0
+                                )
+                                if b_price <= 0.0:
+                                    for p in balance.positions:
+                                        if p.ticker == b_ticker:
+                                            b_price = float(p.purchase_price or p.current_price or 0.0)
+                                            break
+
+                                b_date = normalize_date(
+                                    str(
+                                        b_ord.get("rebalance_date")
+                                        or b_ord.get("date")
+                                        or today_str
+                                    )
+                                )
+
+                                is_present = False
+                                if not existing_real.empty:
+                                    for _, er in existing_real.iterrows():
+                                        er_ticker = str(er.get("ticker", "")).strip()
+                                        er_side = str(er.get("side", "")).strip().upper()
+                                        er_date = normalize_date(str(er.get("rebalance_date", "")))
+                                        if er_ticker == b_ticker and er_side == b_side:
+                                            if er_date == b_date or int(er.get("qty") or 0) == b_qty:
+                                                is_present = True
+                                                er_st = str(er.get("status", "")).strip().upper()
+                                                if er_st != "FILLED":
+                                                    store.update_order_status(
+                                                        int(er["id"]),
+                                                        status="FILLED",
+                                                        filled_qty=b_filled if b_filled > 0 else b_qty,
+                                                    )
+                                                break
+
+                                if not is_present:
+                                    store.insert_order(
+                                        {
+                                            "rebalance_date": b_date,
+                                            "ticker": b_ticker,
+                                            "side": b_side,
+                                            "qty": b_qty,
+                                            "price": b_price,
+                                            "status": "FILLED",
+                                            "filled_qty": b_filled if b_filled > 0 else b_qty,
+                                            "env": "real",
+                                        }
+                                    )
+                                    existing_real = store.get_orders(env="real")
+
+                            try:
+                                orders_df = store.get_orders()
+                                total_orders_count = len(orders_df)
+                            except Exception:
+                                pass
+                    except Exception as ord_exc:
+                        logger.warning("실시간 체결 주문 동기화 실패: %s", ord_exc)
                 positions_list: list[dict[str, Any]] = []
                 stock_value = 0.0
                 for pos in balance.positions:
@@ -651,6 +733,81 @@ def load_top20_preview(
     return (target_date, universe_count, out)
 
 
+def load_cached_top20(
+    cache_path: str | Path = "data/monthly_targets_cache.pkl",
+    db_path: str | Path = "data/quant_ko.db",
+    top_n: int = 20,
+) -> tuple[str, int, pd.DataFrame]:
+    """월별 타깃 캐시(monthly_targets_cache.pkl)에서 최신 9대 팩터 상위 종목을 로드합니다.
+
+    캐시 파일이 없거나 유효하지 않은 경우 DB 기반 load_top20_preview 로 폴백합니다.
+
+    Args:
+        cache_path: 월별 타깃 피클 파일 경로.
+        db_path: SQLite 데이터베이스 파일 경로.
+        top_n: 선정할 목표 종목 수 (기본값 20).
+
+    Returns:
+        `(latest_date, universe_count, top_df)` 튜플.
+    """
+    cache_candidates = [
+        Path(cache_path),
+        Path(__file__).resolve().parents[3] / "data" / "monthly_targets_cache.pkl",
+    ]
+    for c_path in cache_candidates:
+        if c_path.exists():
+            try:
+                with open(c_path, "rb") as f:
+                    targets_cache = pickle.load(f)
+                if isinstance(targets_cache, dict) and targets_cache:
+                    latest_dt = sorted(targets_cache.keys())[-1]
+                    entry = targets_cache[latest_dt]
+                    sdf = entry.get("selected_df") if isinstance(entry, dict) else entry
+                    if isinstance(sdf, pd.DataFrame) and not sdf.empty:
+                        out = sdf.head(top_n).copy()
+                        out["순위"] = range(1, len(out) + 1)
+                        out["종목코드"] = out["ticker"].astype(str)
+                        out["종목명"] = out["name"].astype(str)
+                        if "market_cap" in out.columns:
+                            out["시가총액(억)"] = (out["market_cap"].astype(float) / 1e8).round(1)
+                        for col, out_col, rnd in [
+                            ("per", "PER", 2),
+                            ("psr", "PSR", 2),
+                            ("por", "POR", 2),
+                            ("pgpr", "PGPR", 2),
+                            ("debt_ratio", "부채비율(%)", 1),
+                        ]:
+                            if col in out.columns:
+                                out[out_col] = out[col].astype(float).round(rnd)
+                            elif out_col not in out.columns:
+                                out[out_col] = 0.0
+                        if "total_rank" in out.columns:
+                            out["Total Rank"] = out["total_rank"].astype(int)
+                        elif "Total Rank" not in out.columns:
+                            out["Total Rank"] = range(1, len(out) + 1)
+
+                        val_cols = ["rank_per", "rank_psr", "rank_por", "rank_pgpr"]
+                        gro_cols = [
+                            "rank_revenue_yoy",
+                            "rank_gross_profit_yoy",
+                            "rank_op_income_yoy",
+                            "rank_net_income_owner_yoy",
+                        ]
+                        present_val = [c for c in val_cols if c in out.columns]
+                        present_gro = [c for c in gro_cols if c in out.columns]
+                        out["밸류순위평균"] = (
+                            out[present_val].mean(axis=1).round(1) if present_val else 0.0
+                        )
+                        out["성장순위평균"] = (
+                            out[present_gro].mean(axis=1).round(1) if present_gro else 0.0
+                        )
+                        return (str(latest_dt), len(out), out)
+            except Exception as exc:
+                logger.warning("월별 타깃 캐시 로드 실패: %s", exc)
+
+    return load_top20_preview(db_path=db_path, top_n=top_n)
+
+
 def get_next_rebalance_countdown(
     now_dt: datetime | None = None,
 ) -> dict[str, Any]:
@@ -727,29 +884,69 @@ def diagnose_held_positions_risk(
     except Exception as exc:
         logger.warning("관리종목 조회 중 예외 (정상 간주): %s", exc)
 
-    # 2. 최신 재무제표(자본잠식/부채비율) 조회
+    # 2. 최신 재무제표(부채비율 및 자본잠식률) 조회
+    # 2-1. monthly_targets_cache.pkl 캐시 우선 조회 (사전 계산된 debt_ratio 및 impairment_ratio)
     fin_map: dict[str, dict[str, float]] = {}
-    try:
-        placeholders = ",".join("?" for _ in tickers)
-        query = f"""
-            SELECT c.ticker, f.total_equity, f.capital_stock, f.total_liabilities
-            FROM companies c
-            JOIN financials f ON c.corp_code = f.corp_code
-            WHERE c.ticker IN ({placeholders})
-            ORDER BY f.fiscal_year DESC, f.quarter DESC
-        """
-        with store.get_connection() as conn:
-            fin_df = pd.read_sql_query(query, conn, params=tickers)
-        for _, row in fin_df.drop_duplicates(subset=["ticker"]).iterrows():
-            t = str(row["ticker"]).strip()
-            te = float(row["total_equity"] or 0.0)
-            cs = float(row["capital_stock"] or 0.0)
-            tl = float(row["total_liabilities"] or 0.0)
-            impairment = ((cs - te) / cs * 100.0) if cs > 0 else 0.0
-            debt = (tl / te * 100.0) if te > 0 else 0.0
-            fin_map[t] = {"impairment_ratio": impairment, "debt_ratio": debt}
-    except Exception as exc:
-        logger.warning("보유종목 재무 위험 조회 실패: %s", exc)
+    cache_candidates = [
+        Path("data/monthly_targets_cache.pkl"),
+        Path(__file__).resolve().parents[3] / "data" / "monthly_targets_cache.pkl",
+    ]
+    for c_path in cache_candidates:
+        if c_path.exists():
+            try:
+                with open(c_path, "rb") as f:
+                    targets_cache = pickle.load(f)
+                if isinstance(targets_cache, dict):
+                    for d_key in sorted(targets_cache.keys(), reverse=True):
+                        entry = targets_cache[d_key]
+                        sdf = entry.get("selected_df") if isinstance(entry, dict) else entry
+                        if isinstance(sdf, pd.DataFrame) and not sdf.empty:
+                            for _, r in sdf.iterrows():
+                                t = str(r["ticker"]).strip()
+                                if t in tickers and t not in fin_map:
+                                    dr = (
+                                        float(r["debt_ratio"])
+                                        if "debt_ratio" in r and pd.notna(r["debt_ratio"])
+                                        else 0.0
+                                    )
+                                    raw_imp = (
+                                        float(r["impairment_ratio"])
+                                        if "impairment_ratio" in r and pd.notna(r["impairment_ratio"])
+                                        else 0.0
+                                    )
+                                    imp = max(0.0, raw_imp)
+                                    fin_map[t] = {"debt_ratio": dr, "impairment_ratio": imp}
+                if len(fin_map) == len(tickers):
+                    break
+            except Exception as exc:
+                logger.warning("월별 타깃 캐시 읽기 실패: %s", exc)
+
+    # 2-2. 캐시에 없는 종목은 DB financials 테이블 폴백 조회
+    remaining_tickers = [t for t in tickers if t not in fin_map]
+    if remaining_tickers:
+        try:
+            placeholders = ",".join("?" for _ in remaining_tickers)
+            query = f"""
+                SELECT c.ticker, f.total_equity, f.capital_stock, f.total_liabilities
+                FROM companies c
+                JOIN financials f ON c.corp_code = f.corp_code
+                WHERE c.ticker IN ({placeholders})
+                  AND f.total_equity IS NOT NULL AND f.total_equity > 0
+                ORDER BY f.fiscal_year DESC, f.quarter DESC, CASE WHEN f.fs_type = 'CFS' THEN 1 ELSE 2 END
+            """
+            with store.get_connection() as conn:
+                fin_df = pd.read_sql_query(query, conn, params=remaining_tickers)
+            for _, row in fin_df.drop_duplicates(subset=["ticker"]).iterrows():
+                t = str(row["ticker"]).strip()
+                te = float(row["total_equity"] or 0.0)
+                cs = float(row["capital_stock"] or 0.0)
+                tl = float(row["total_liabilities"] or 0.0)
+                raw_imp = ((cs - te) / cs * 100.0) if (cs > 0 and cs > te) else 0.0
+                imp = max(0.0, raw_imp)
+                debt = (tl / te * 100.0) if te > 0 else 0.0
+                fin_map[t] = {"impairment_ratio": imp, "debt_ratio": debt}
+        except Exception as exc:
+            logger.warning("보유종목 재무 위험 DB 조회 실패: %s", exc)
 
     # 3. 종합 위험도 판정
     for _, pos in positions_df.iterrows():
@@ -763,8 +960,10 @@ def diagnose_held_positions_risk(
             issues.append(f"🚨 {desig_map[t]} 지정 (익일 08:30 시장가 긴급 청산 대상)")
 
         fin_info = fin_map.get(t, {})
-        imp = fin_info.get("impairment_ratio", 0.0)
-        debt = fin_info.get("debt_ratio", 0.0)
+        raw_imp = fin_info.get("impairment_ratio", 0.0)
+        imp = max(0.0, float(raw_imp))
+        debt = float(fin_info.get("debt_ratio", 0.0))
+        imp_display = "0.0% (정상)" if imp <= 0.0 else f"{imp:.1f}%"
 
         if imp > 0:
             if severity != "DANGER":
@@ -786,6 +985,7 @@ def diagnose_held_positions_risk(
                 "issues": " · ".join(issues),
                 "debt_ratio": debt,
                 "impairment_ratio": imp,
+                "impairment_display": imp_display,
             }
         )
 

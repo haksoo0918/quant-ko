@@ -34,6 +34,7 @@ from quant_ko.dashboard.data_loader import (  # noqa: E402
     get_next_rebalance_countdown,
     load_account_and_positions,
     load_actual_trade_logs,
+    load_cached_top20,
     load_long_term_backtest_series,
     load_top20_preview,
 )
@@ -870,7 +871,7 @@ def _render_tab1_equity_and_portfolio(
                     f"""
                     <div class="{cls_name}">
                         <span><strong>{diag["name"]} ({diag["ticker"]})</strong>: {diag["issues"]}</span>
-                        <span style="font-size:0.82rem; opacity:0.9;">부채비율: {diag["debt_ratio"]:.1f}% | 자본잠식률: {diag["impairment_ratio"]:.1f}%</span>
+                        <span style="font-size:0.82rem; opacity:0.9;">부채비율: {diag["debt_ratio"]:.1f}% | 자본잠식률: {diag.get("impairment_display", f"{diag['impairment_ratio']:.1f}%")}</span>
                     </div>
                     """,
                     unsafe_allow_html=True,
@@ -1084,80 +1085,97 @@ def _render_tab4_universe_and_status(db_path: str) -> None:
 
     st.markdown(
         """
-        > **안내:** 아래 버튼을 클릭하면 DB의 최신 기준일(`PIT`) 재무 스냅샷과 시가총액을 바탕으로
-        > **Order B 유니버스 필터** 및 **9대 팩터 멀티 스코어링**을 즉시 실행하여 상위 20개 타깃 종목을 산출합니다.
+        > **안내:** 최신 캐시된 9대 팩터 상위 종목 및 팩터 밸런스 프로파일을 즉시 표시합니다.
+        > 전체 DB 재계산이 필요한 경우 아래 재산출 버튼을 클릭하여 즉시 갱신할 수 있습니다.
         """
     )
 
-    if st.button("🎯 최신 기준일 9대 팩터 Top 20 타깃 종목 산출하기", type="primary"):
+    recalc_clicked = st.button("🔄 9대 팩터 Top 20 즉시 재산출 (전체 DB 재계산)", type="primary")
+    if recalc_clicked:
         with st.spinner("PIT 재무 스냅샷 및 9대 팩터 스코어링 계산 중..."):
             latest_dt, univ_cnt, top20_df = load_top20_preview(db_path=db_path, top_n=20)
+        if hasattr(st, "session_state"):
+            st.session_state["top20_recalc"] = (latest_dt, univ_cnt, top20_df)
         st.success(
-            f"기준일 **{latest_dt}** · Order B 유니버스 통과 **{univ_cnt}종목** 중 상위 **{len(top20_df)}종목** 선정 완료!"
+            f"재산출 완료: 기준일 **{latest_dt}** · Order B 유니버스 통과 **{univ_cnt} 종목** 중 상위 **{len(top20_df)} 종목** 선정 완료!"
         )
+    elif hasattr(st, "session_state") and "top20_recalc" in st.session_state:
+        latest_dt, univ_cnt, top20_df = st.session_state["top20_recalc"]
+        st.info(
+            f"기준일 **{latest_dt}** · Order B 유니버스 통과 **{univ_cnt} 종목** 중 상위 **{len(top20_df)} 종목** (재산출 완료)"
+        )
+    else:
+        latest_dt, univ_cnt, top20_df = load_cached_top20(db_path=db_path, top_n=20)
         if not top20_df.empty:
-            cols = [
-                "순위",
-                "종목코드",
-                "종목명",
-                "시가총액(억)",
-                "PER",
-                "PSR",
-                "POR",
-                "PGPR",
-                "부채비율(%)",
-                "밸류순위평균",
-                "성장순위평균",
-                "Total Rank",
-            ]
-            available_cols = [c for c in cols if c in top20_df.columns]
-            st.dataframe(top20_df[available_cols], use_container_width=True, hide_index=True)
+            st.info(
+                f"기준일 **{latest_dt}** · 최신 캐시 기준 9대 팩터 상위 **{len(top20_df)} 종목** (전체 재계산이 필요한 경우 상단 버튼 클릭)"
+            )
 
-            # 팩터 밸런스 프로파일 시각화 (밸류 vs 성장 순위 비교)
-            if "밸류순위평균" in top20_df.columns and "성장순위평균" in top20_df.columns:
-                st.markdown("#### ⚖️ Top 20 종목 밸류(저평가) vs 성장(고성장) 팩터 프로파일")
-                st.caption(
-                    "※ 순위 수치가 낮을수록(왼쪽·아래쪽) 해당 팩터에서 더 우수한 종목입니다."
+    if not top20_df.empty:
+        cols = [
+            "순위",
+            "종목코드",
+            "종목명",
+            "시가총액(억)",
+            "PER",
+            "PSR",
+            "POR",
+            "PGPR",
+            "부채비율(%)",
+            "밸류순위평균",
+            "성장순위평균",
+            "Total Rank",
+        ]
+        available_cols = [c for c in cols if c in top20_df.columns]
+        st.dataframe(top20_df[available_cols], use_container_width=True, hide_index=True)
+
+        # 팩터 밸런스 프로파일 시각화 (밸류 vs 성장 순위 비교)
+        if "밸류순위평균" in top20_df.columns and "성장순위평균" in top20_df.columns:
+            st.markdown("#### ⚖️ Top 20 종목 밸류(저평가) vs 성장(고성장) 팩터 프로파일")
+            st.caption(
+                "※ 순위 수치가 낮을수록(왼쪽·아래쪽) 해당 팩터에서 더 우수한 종목입니다."
+            )
+            fig_factor = go.Figure()
+            fig_factor.add_trace(
+                go.Scatter(
+                    x=top20_df["밸류순위평균"],
+                    y=top20_df["성장순위평균"],
+                    mode="markers+text",
+                    text=top20_df["종목명"],
+                    textposition="top center",
+                    marker={
+                        "size": 11,
+                        "color": top20_df["Total Rank"],
+                        "colorscale": "Viridis",
+                        "showscale": True,
+                        "colorbar": {"title": "Total Rank"},
+                    },
+                    hovertemplate=(
+                        "<b>%{text} (%{customdata[0]})</b><br>"
+                        "시가총액: %{customdata[1]:,.1f}억원<br>"
+                        "밸류 4종 평균 순위: %{x:.1f}위<br>"
+                        "성장 4종 평균 순위: %{y:.1f}위<br>"
+                        "종합 Total Rank: %{marker.color}위<extra></extra>"
+                    ),
+                    customdata=list(
+                        zip(
+                            top20_df["종목코드"],
+                            top20_df["시가총액(억)"],
+                            strict=False,
+                        )
+                    ),
                 )
-                fig_factor = go.Figure()
-                fig_factor.add_trace(
-                    go.Scatter(
-                        x=top20_df["밸류순위평균"],
-                        y=top20_df["성장순위평균"],
-                        mode="markers+text",
-                        text=top20_df["종목명"],
-                        textposition="top center",
-                        marker={
-                            "size": 11,
-                            "color": top20_df["Total Rank"],
-                            "colorscale": "Viridis",
-                            "showscale": True,
-                            "colorbar": {"title": "Total Rank"},
-                        },
-                        hovertemplate=(
-                            "<b>%{text} (%{customdata[0]})</b><br>"
-                            "시가총액: %{customdata[1]:,.1f}억원<br>"
-                            "밸류 4종 평균 순위: %{x:.1f}위<br>"
-                            "성장 4종 평균 순위: %{y:.1f}위<br>"
-                            "종합 Total Rank: %{marker.color}위<extra></extra>"
-                        ),
-                        customdata=list(
-                            zip(
-                                top20_df["종목코드"],
-                                top20_df["시가총액(억)"],
-                                strict=False,
-                            )
-                        ),
-                    )
-                )
-                fig_factor.update_layout(
-                    height=450,
-                    template="plotly_white",
-                    xaxis_title="밸류 4종 팩터 평균 순위 (작을수록 저평가 우수)",
-                    yaxis_title="성장 4종 팩터 평균 순위 (작을수록 고성장 우수)",
-                    margin={"l": 40, "r": 30, "t": 30, "b": 40},
-                )
-                st.plotly_chart(fig_factor, use_container_width=True)
+            )
+            fig_factor.update_layout(
+                height=450,
+                template="plotly_white",
+                xaxis_title="밸류 4종 팩터 평균 순위 (작을수록 저평가 우수)",
+                yaxis_title="성장 4종 팩터 평균 순위 (작을수록 고성장 우수)",
+                margin={"l": 40, "r": 30, "t": 30, "b": 40},
+            )
+            st.plotly_chart(fig_factor, use_container_width=True)
+    else:
+        st.info("선정된 타깃 종목 데이터가 없습니다. 상단 '재산출' 버튼을 눌러 계산을 시도하세요.")
 
 
 def main(db_path: str = "data/quant_ko.db") -> None:

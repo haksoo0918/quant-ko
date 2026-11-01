@@ -5,6 +5,17 @@
 
 ---
 
+## [1.6.1] - 2026-11-01
+
+### 수정 및 개선 (Fixed & Changed)
+- **대시보드 실전 체결 주문 DB 자동 동기화 (`src/quant_ko/dashboard/data_loader.py`)**:
+  - `load_account_and_positions(..., fetch_live_kis=True)` 호출 시 한투 API의 `client.fetch_orders()` 체결 내역을 SQLite `orders` 테이블로 자동 Upsert 동기화하여 Tab 2 (Orders)에서 실제 매매 기록이 누락 없이 즉시 노출되도록 개선.
+- **부채비율 및 자본잠식률 표기 정합성 보정 (`src/quant_ko/dashboard/data_loader.py`, `src/quant_ko/dashboard/app.py`)**:
+  - 사전 계산 캐시(`monthly_targets_cache.pkl`) 및 재무 테이블 조인 연동으로 실제 부채비율(110\~170%)이 진단 카드에 정상 표기되도록 수정 (0.0% 맹목적 폴백 차단).
+  - 정상 기업의 자본잠식률은 `0.0% (정상)` 으로 클램핑 표기.
+- **Tab 4 타깃 20종목 즉시 노출 개선 (`src/quant_ko/dashboard/app.py`)**:
+  - 버튼 클릭 대기 없이 대시보드 접속 즉시 캐시된 최신 9대 팩터 Top 20 종목 테이블과 팩터 밸런스 산점도 차트가 자동 렌더링되도록 수정.
+
 ## [1.6.0] - 2026-11-01
 
 ### 추가 및 개선 (Added & Changed)
