@@ -23,6 +23,7 @@ from datetime import datetime
 from dotenv import load_dotenv
 
 from quant_ko.broker.kis import KisClient
+from quant_ko.config import load_config
 from quant_ko.data.krx import KrxClient
 from quant_ko.data.store import DataStore, apply_oci_db_patch_if_needed
 from quant_ko.live.monitor import DailyMonitor
@@ -85,6 +86,7 @@ def print_status(kis_client: KisClient, env: str, date_str: str) -> None:
 def main() -> None:
     """명령줄 인자를 파싱하여 모드(status, monitor, preview, rebalance)에 따라 작업을 실행합니다."""
     load_dotenv()
+    cfg = load_config()
 
     parser = argparse.ArgumentParser(description="quant-ko Live / Mock Quantitative Trading CLI")
     parser.add_argument(
@@ -96,7 +98,7 @@ def main() -> None:
     parser.add_argument(
         "--env",
         choices=["mock", "real"],
-        default=os.getenv("KIS_MODE", "MOCK").lower(),
+        default=cfg["broker"]["default_env"],
         help="Broker environment: mock or real",
     )
     parser.add_argument(
@@ -113,13 +115,13 @@ def main() -> None:
     parser.add_argument(
         "--strategy",
         choices=["seasonality", "standard"],
-        default="seasonality",
+        default=cfg["strategy"]["mode"],
         help="Strategy mode: seasonality (Strategy 1) or standard",
     )
     parser.add_argument(
         "--order-type",
         choices=["01", "00"],
-        default="01",
+        default=cfg["broker"]["order_type"],
         help="Order division: '01' (market order / 시장가 15:20 동시호가 100%% 체결, default) or '00' (limit order / 지정가)",
     )
     parser.add_argument(

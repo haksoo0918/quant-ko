@@ -138,6 +138,7 @@
 
 ```text
 src/quant_ko/
+  ├── config.py    # config.toml 운영 설정 로더 (tomllib 기반)
   ├── data/        # dart.py, krx.py, store.py (SQLite), collector.py
   ├── pit/         # 기준일 재무 스냅샷 빌더 (builder.py)
   ├── strategy/    # universe.py (Order B 필터), scoring.py (9대 팩터)
@@ -243,9 +244,29 @@ src/quant_ko/
 
 ---
 
-## 8. 통합 운영 CLI 및 스케줄러
+## 8. 설정 파일(`config.toml`) 및 통합 운영 스케줄러
 
-### 8.1 CLI 엔트리포인트 (`main.py`)
+### 8.1 전략 및 운영 설정 파일 (`config.toml`)
+
+- **목적:** `.env`의 보안 비밀(API Key 등)과 분리하여 전략 모드(계절성 ON/OFF) 및 운영 파라미터를 사용자가 직관적으로 관리.
+- **파서:** Python 3.11+ 표준 내장 `tomllib` (추가 라이브러리 의존성 없음).
+- **우선순위 계층 (Priority Hierarchy):**
+  1. CLI 명시 인자 (`--strategy standard`, `--env mock` 등)
+  2. `config.toml` 파일 설정값 (`strategy.mode`, `broker.default_env` 등)
+  3. 코드 내 내장 기본값 (`strategy.mode = "seasonality"`, `broker.default_env = "real"`)
+- **설정 파일 예시:**
+  ```toml
+  [strategy]
+  mode = "seasonality"      # "seasonality" (11-4월 주식 / 5-10월 파킹) 또는 "standard" (연중 상시 투자)
+  target_count = 20         # 보유 포트폴리오 목표 종목 수
+  cash_buffer_ratio = 0.015 # 1.5% 안전 현금 버퍼
+
+  [broker]
+  default_env = "real"      # 기본 환경: "real" 또는 "mock"
+  order_type = "01"         # 기본 매수 주문: "01" (시장가 동시호가) 또는 "00" (지정가)
+  ```
+
+### 8.2 CLI 엔트리포인트 (`main.py`)
 
 ```powershell
 # 1. 계좌 잔고 및 전략 상태 조회

@@ -42,6 +42,7 @@
 
 ```text
 src/quant_ko/
+  ├── config.py    # config.toml 운영 설정 로더 (tomllib 기반)
   ├── data/        # OpenDART, KRX 수집기 및 SQLite 저장소 (165만 건 주가, 2.5만 건 재무)
   ├── pit/         # 공시접수일 기준 Point-in-Time 재무 스냅샷 빌더
   ├── strategy/    # Order B 유니버스 필터, 9대 팩터 스코어링 및 포트폴리오 산출
@@ -86,31 +87,44 @@ KIS_REAL_ACNT_PRDT_CD=01
 DISCORD_WEBHOOK_URL=https://discord.com/api/webhooks/...
 ```
 
-### 3. 모니터링 대시보드 실행
+### 3. 전략 및 운영 모드 설정 (`config.toml`)
+`.env`의 보안 비밀과 분리된 `config.toml`에서 계절성 모드(ON/OFF) 및 파라미터를 손쉽게 설정합니다:
+```toml
+[strategy]
+mode = "seasonality"        # "seasonality" (11-4월 주식 / 5-10월 파킹) 또는 "standard" (상시 투자)
+target_count = 20           # 포트폴리오 보유 종목 수
+cash_buffer_ratio = 0.015   # 1.5% 안전 현금 버퍼
+
+[broker]
+default_env = "real"        # 기본 실행 환경: "real" 또는 "mock"
+order_type = "01"           # 기본 매수 주문: "01" (시장가 동시호가) 또는 "00" (지정가)
+```
+
+### 4. 모니터링 대시보드 실행
 웹 브라우저(`http://localhost:8501`)에서 자산 변화 추이, 실시간 보유 잔고, 거래기록, 전략 명세를 확인합니다:
 ```powershell
 uv run streamlit run src/quant_ko/dashboard/app.py
 ```
 
-### 4. 실전 / 모의 운영 CLI 명령어
+### 5. 실전 / 모의 운영 CLI 명령어
 ```powershell
-# 1. 현재 계좌 잔고 및 전략 상태 확인
-uv run python -m quant_ko.main --mode status --env real
+# 1. 현재 계좌 잔고 및 전략 상태 확인 (config.toml 설정 자동 반영)
+uv run python -m quant_ko.main --mode status
 
 # 2. 리밸런싱 Dry-Run 모의 검증 (실제 주문 없이 20종목 수량 계산 및 로그 검증)
-uv run python -m quant_ko.main --mode rebalance --env real --strategy seasonality --dry-run
+uv run python -m quant_ko.main --mode rebalance --dry-run
 
 # 3. 리밸런싱 D-1 사전 브리핑 발송 (매월 마지막 평일 D-1 18:00)
-uv run python -m quant_ko.main --mode rebalance --env real --strategy seasonality --preview
+uv run python -m quant_ko.main --mode rebalance --preview
 
 # 4. 실전 리밸런싱 실행 (매월 마지막 영업일 15:20)
-uv run python -m quant_ko.main --mode rebalance --env real --strategy seasonality
+uv run python -m quant_ko.main --mode rebalance
 
 # 5. 미체결 보충 매수 실행 (익일 15:20)
-uv run python -m quant_ko.main --mode rebalance --env real --strategy seasonality --catchup
+uv run python -m quant_ko.main --mode rebalance --catchup
 
 # 6. 일일 관리/환기종목 비상 감시 (평일 08:30)
-uv run python -m quant_ko.main --mode monitor --env real
+uv run python -m quant_ko.main --mode monitor
 ```
 
 ---
