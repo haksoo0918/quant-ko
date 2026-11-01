@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
+import pandas as pd
 import pytest
 
 from quant_ko.broker.kis import Balance, Position
@@ -14,6 +16,7 @@ from quant_ko.dashboard.app import (
 )
 from quant_ko.dashboard.data_loader import (
     build_account_equity_curve,
+    diagnose_held_positions_risk,
     get_db_status_summary,
     load_account_and_positions,
     load_actual_trade_logs,
@@ -338,7 +341,6 @@ def test_streamlit_dashboard_full_ui_rendering_audit(
 ) -> None:
     """대시보드 main() 실행 시 4대 탭, 메트릭, 차트, 테이블, 버튼 인터랙션이 예외 없이 렌더링되는지 검증합니다."""
     from contextlib import contextmanager
-    from typing import Any
 
     from quant_ko.dashboard import app as dashboard_app
 
@@ -543,7 +545,6 @@ def test_load_account_and_positions_default_offline(sample_dashboard_db: Path) -
 def test_top_header_and_kpis_offline_and_live_sync_behavior(sample_dashboard_db: Path) -> None:
     """대시보드 상단 배너에서 오프라인 뱃지 및 동기화 버튼 클릭 시 실시간 뱃지와 잔고가 갱신되는지 검증합니다."""
     from contextlib import contextmanager
-    from typing import Any
 
     from quant_ko.dashboard import app as dashboard_app
 
@@ -614,3 +615,260 @@ def test_top_header_and_kpis_offline_and_live_sync_behavior(sample_dashboard_db:
         assert any("badge-live-kis" in m for m in st_mock2.markdowns)
     finally:
         dashboard_app.st = orig_st
+
+
+def test_load_account_and_positions_syncs_live_orders_to_db(
+    sample_dashboard_db: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """KIS 실시간 연동 시 브로커 체결 주문이 DB orders 테이블에 자동 동기화되는지 검증합니다."""
+    store = DataStore(sample_dashboard_db)
+    # 초기 실전 주문은 1건 (000010 SELL 400)
+    initial_real_orders = store.get_orders(env="real")
+    assert len(initial_real_orders) == 1
+
+    class LiveOrderKisClient:
+        app_key = "dummy_key"
+        app_secret = "dummy_secret"
+        account_prefix = "50211234"
+        account_suffix = "01"
+
+        def fetch_balance(self) -> Balance:
+            return Balance(
+                cash=6_000_000.0,
+                total_eval_amount=8_000_000.0,
+                positions=[
+                    Position(
+                        ticker="000030",
+                        name="감마제약",
+                        qty=200,
+                        current_price=10_000.0,
+                        eval_amount=2_000_000.0,
+                        purchase_price=9_500.0,
+                    )
+                ],
+            )
+
+        def fetch_orders(self, date: str | None = None) -> list[dict]:
+            return [
+                {
+                    "order_no": "ORD-LIVE-101",
+                    "ticker": "000030",
+                    "side": "BUY",
+                    "order_qty": 200,
+                    "filled_qty": 200,
+                    "order_price": 9500.0,
+                    "status": "FILLED",
+                    "raw_status": "체결완료",
+                }
+            ]
+
+    monkeypatch.setattr("quant_ko.dashboard.data_loader.KisClient", LiveOrderKisClient)
+
+    # 1. 1차 호출: 신규 체결 주문 동기화
+    info = load_account_and_positions(
+        db_path=sample_dashboard_db,
+        fetch_live_kis=True,
+    )
+    assert info["source"] == "KIS_LIVE"
+
+    real_orders = store.get_orders(env="real")
+    assert len(real_orders) == 2
+    new_order = real_orders[real_orders["ticker"] == "000030"].iloc[0]
+    assert new_order["side"] == "BUY"
+    assert new_order["qty"] == 200
+    assert new_order["price"] == 9500.0
+    assert new_order["status"] == "FILLED"
+    assert new_order["filled_qty"] == 200
+    assert new_order["env"] == "real"
+
+    # 2. 2차 호출 시 중복 적재되지 않아야 함
+    info2 = load_account_and_positions(
+        db_path=sample_dashboard_db,
+        fetch_live_kis=True,
+    )
+    real_orders2 = store.get_orders(env="real")
+    assert len(real_orders2) == 2
+    assert info2["total_orders_count"] == 5  # 기존 4건 + 신규 1건
+
+
+def test_diagnose_held_positions_risk_debt_and_impairment(
+    tmp_path: Path,
+) -> None:
+    """보유종목 진단 시 monthly_targets_cache.pkl 및 DB financials에서 정상 부채비율과 자본잠식률(0.0% 정상)을 산출하는지 검증합니다."""
+    # 1. monthly_targets_cache.pkl 에 존재하는 종목(예: 225590, 060480 등) 진단
+    cache_positions_df = pd.DataFrame(
+        [
+            {"ticker": "225590", "name": "엠에프엠코리아"},
+            {"ticker": "060480", "name": "포엔샤"},
+        ]
+    )
+    diagnoses_cache = diagnose_held_positions_risk(cache_positions_df)
+    assert len(diagnoses_cache) == 2
+    diag_map = {d["ticker"]: d for d in diagnoses_cache}
+
+    # 110% ~ 170% 범위의 실제 부채비율 확인 (0.0%로 폴백되지 않아야 함)
+    assert 100.0 <= diag_map["225590"]["debt_ratio"] <= 200.0
+    assert 100.0 <= diag_map["060480"]["debt_ratio"] <= 200.0
+    # 자본잠식률은 정상 기업이므로 0.0% (정상)이어야 함
+    assert diag_map["225590"]["impairment_ratio"] == 0.0
+    assert diag_map["225590"]["impairment_display"] == "0.0% (정상)"
+    assert diag_map["060480"]["impairment_ratio"] == 0.0
+    assert diag_map["060480"]["impairment_display"] == "0.0% (정상)"
+
+    # 2. 캐시에 없는 신규 종목의 DB financials 폴백 검증
+    db_file = tmp_path / "test_fin.db"
+    store = DataStore(db_file)
+    store.initialize_schema()
+    store.upsert_companies(
+        [
+            {
+                "ticker": "999010",
+                "corp_code": "00999010",
+                "name": "클린테크",
+                "market": "KOSDAQ",
+                "sector": "IT",
+                "listed_at": "2020-01-01",
+                "fiscal_month": 12,
+            },
+            {
+                "ticker": "999020",
+                "corp_code": "00999020",
+                "name": "잠식기업",
+                "market": "KOSDAQ",
+                "sector": "제조",
+                "listed_at": "2020-01-01",
+                "fiscal_month": 12,
+            },
+        ]
+    )
+    store.upsert_financials(
+        [
+            # 클린테크: 자본총계 1000억, 부채총계 1500억, 자본금 500억 (부채비율 150%, cs <= te 이므로 자본잠식 0.0%)
+            {
+                "corp_code": "00999010",
+                "fiscal_year": 2026,
+                "quarter": 2,
+                "fs_type": "CFS",
+                "revenue": 100.0,
+                "gross_profit": 50.0,
+                "op_income": 20.0,
+                "net_income_owner": 15.0,
+                "total_equity": 100_000_000_000.0,
+                "total_liabilities": 150_000_000_000.0,
+                "capital_stock": 50_000_000_000.0,
+                "rcept_dt": "2026-08-14",
+            },
+            # 잠식기업: 자본총계 200억, 부채총계 600억, 자본금 500억 (부채비율 300%, 자본잠식률 60%)
+            {
+                "corp_code": "00999020",
+                "fiscal_year": 2026,
+                "quarter": 2,
+                "fs_type": "CFS",
+                "revenue": 50.0,
+                "gross_profit": 10.0,
+                "op_income": -10.0,
+                "net_income_owner": -20.0,
+                "total_equity": 20_000_000_000.0,
+                "total_liabilities": 60_000_000_000.0,
+                "capital_stock": 50_000_000_000.0,
+                "rcept_dt": "2026-08-14",
+            },
+        ]
+    )
+
+    db_positions_df = pd.DataFrame(
+        [
+            {"ticker": "999010", "name": "클린테크"},
+            {"ticker": "999020", "name": "잠식기업"},
+        ]
+    )
+    diagnoses_db = diagnose_held_positions_risk(db_positions_df, db_path=db_file)
+    db_map = {d["ticker"]: d for d in diagnoses_db}
+
+    # 클린테크
+    assert db_map["999010"]["debt_ratio"] == 150.0
+    assert db_map["999010"]["impairment_ratio"] == 0.0
+    assert db_map["999010"]["impairment_display"] == "0.0% (정상)"
+    assert db_map["999010"]["severity"] == "NORMAL"
+
+    # 잠식기업
+    assert db_map["999020"]["debt_ratio"] == 300.0
+    assert db_map["999020"]["impairment_ratio"] == 60.0
+    assert db_map["999020"]["severity"] == "DANGER"
+    assert "자본잠식 발생" in db_map["999020"]["issues"]
+
+
+def test_tab4_renders_top20_preview_by_default(
+    sample_dashboard_db: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Tab 4 렌더링 시 버튼 클릭 없이도 최신 캐시 기반 Top 20 및 팩터 차트가 기본 표시되는지 검증합니다."""
+    from quant_ko.dashboard import app as dashboard_app
+
+    class _MockTab4Streamlit:
+        def __init__(self, button_clicked: bool = False) -> None:
+            self.button_clicked = button_clicked
+            self.subheaders: list[str] = []
+            self.metrics: list[Any] = []
+            self.markdowns: list[str] = []
+            self.dataframes: list[Any] = []
+            self.plotly_charts: list[Any] = []
+            self.buttons_rendered: list[str] = []
+            self.info_messages: list[str] = []
+            self.success_messages: list[str] = []
+            self.captions: list[str] = []
+
+        def subheader(self, body: str, **kwargs: Any) -> None:
+            self.subheaders.append(body)
+
+        def columns(self, spec: int | list[int]) -> list[Any]:
+            count = spec if isinstance(spec, int) else len(spec)
+
+            class _MockCol:
+                def __init__(self, st_ref: Any) -> None:
+                    self.st = st_ref
+
+                def metric(self, label: str, value: Any, delta: Any = None) -> None:
+                    self.st.metric(label, value, delta)
+
+            return [_MockCol(self) for _ in range(count)]
+
+        def metric(self, label: str, value: Any, delta: Any = None) -> None:
+            self.metrics.append((label, value, delta))
+
+        def markdown(self, body: str, **kwargs: Any) -> None:
+            self.markdowns.append(body)
+
+        def caption(self, body: str, **kwargs: Any) -> None:
+            self.captions.append(body)
+
+        def button(self, label: str, **kwargs: Any) -> bool:
+            self.buttons_rendered.append(label)
+            return self.button_clicked
+
+        def dataframe(self, data: Any, **kwargs: Any) -> None:
+            self.dataframes.append(data)
+
+        def plotly_chart(self, fig: Any, **kwargs: Any) -> None:
+            self.plotly_charts.append(fig)
+
+        def info(self, body: str) -> None:
+            self.info_messages.append(body)
+
+        def success(self, body: str) -> None:
+            self.success_messages.append(body)
+
+    mock_st = _MockTab4Streamlit(button_clicked=False)
+    monkeypatch.setattr(dashboard_app, "st", mock_st)
+
+    dashboard_app._render_tab4_universe_and_status(db_path=str(sample_dashboard_db))
+
+    # 1. 재산출 버튼이 제공되는지 확인
+    assert any("🔄 9대 팩터 Top 20 즉시 재산출 (전체 DB 재계산)" in b for b in mock_st.buttons_rendered)
+    # 2. 버튼 미클릭 상태에서도 캐시된 Top 20 테이블이 즉시 표시되어야 함
+    assert len(mock_st.dataframes) >= 1
+    # 3. 팩터 프로파일 차트도 즉시 표시되어야 함
+    assert len(mock_st.plotly_charts) >= 1
+
+
