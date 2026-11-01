@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import pickle
 from pathlib import Path
 from typing import Any
 
@@ -20,6 +21,7 @@ from quant_ko.dashboard.data_loader import (
     get_db_status_summary,
     load_account_and_positions,
     load_actual_trade_logs,
+    load_cached_top20,
     load_top20_preview,
     mask_account_no,
 )
@@ -695,21 +697,53 @@ def test_load_account_and_positions_syncs_live_orders_to_db(
 def test_diagnose_held_positions_risk_debt_and_impairment(
     tmp_path: Path,
 ) -> None:
-    """보유종목 진단 시 monthly_targets_cache.pkl 및 DB financials에서 정상 부채비율과 자본잠식률(0.0% 정상)을 산출하는지 검증합니다."""
-    # 1. monthly_targets_cache.pkl 에 존재하는 종목(예: 225590, 060480 등) 진단
+    """보유종목 진단 시 mock 캐시 pkl 및 DB financials에서 정상 부채비율과 자본잠식률(0.0% 정상)을 산출하는지 검증합니다."""
+    # 1. Mock monthly_targets_cache.pkl 생성하여 캐시 우선 조회 검증
+    mock_cache_file = tmp_path / "mock_monthly_targets_cache.pkl"
+    mock_selected_df = pd.DataFrame(
+        [
+            {
+                "ticker": "225590",
+                "name": "엠에프엠코리아",
+                "debt_ratio": 130.0,
+                "impairment_ratio": 0.0,
+            },
+            {
+                "ticker": "060480",
+                "name": "포엔샤",
+                "debt_ratio": 130.0,
+                "impairment_ratio": 0.0,
+            },
+        ]
+    )
+    mock_cache_data = {
+        "2026-10-31": {
+            "period_label": "2026-10",
+            "prior_date": "2026-09-30",
+            "selected_df": mock_selected_df,
+        }
+    }
+    with open(mock_cache_file, "wb") as f:
+        pickle.dump(mock_cache_data, f)
+
     cache_positions_df = pd.DataFrame(
         [
             {"ticker": "225590", "name": "엠에프엠코리아"},
             {"ticker": "060480", "name": "포엔샤"},
         ]
     )
-    diagnoses_cache = diagnose_held_positions_risk(cache_positions_df)
+    diagnoses_cache = diagnose_held_positions_risk(
+        cache_positions_df,
+        cache_path=mock_cache_file,
+    )
     assert len(diagnoses_cache) == 2
     diag_map = {d["ticker"]: d for d in diagnoses_cache}
 
-    # 110% ~ 170% 범위의 실제 부채비율 확인 (0.0%로 폴백되지 않아야 함)
+    # 110% - 170% 범위의 실제 부채비율 확인 (0.0%로 폴백되지 않아야 함)
     assert 100.0 <= diag_map["225590"]["debt_ratio"] <= 200.0
     assert 100.0 <= diag_map["060480"]["debt_ratio"] <= 200.0
+    assert diag_map["225590"]["debt_ratio"] == 130.0
+    assert diag_map["060480"]["debt_ratio"] == 130.0
     # 자본잠식률은 정상 기업이므로 0.0% (정상)이어야 함
     assert diag_map["225590"]["impairment_ratio"] == 0.0
     assert diag_map["225590"]["impairment_display"] == "0.0% (정상)"
@@ -806,6 +840,44 @@ def test_tab4_renders_top20_preview_by_default(
     """Tab 4 렌더링 시 버튼 클릭 없이도 최신 캐시 기반 Top 20 및 팩터 차트가 기본 표시되는지 검증합니다."""
     from quant_ko.dashboard import app as dashboard_app
 
+    mock_top20_df = pd.DataFrame(
+        [
+            {
+                "순위": 1,
+                "종목코드": "000010",
+                "종목명": "알파테크",
+                "시가총액(억)": 300.0,
+                "PER": 8.5,
+                "PSR": 1.2,
+                "POR": 7.0,
+                "PGPR": 6.5,
+                "부채비율(%)": 45.0,
+                "밸류순위평균": 12.5,
+                "성장순위평균": 8.0,
+                "Total Rank": 1,
+            },
+            {
+                "순위": 2,
+                "종목코드": "000020",
+                "종목명": "베타바이오",
+                "시가총액(억)": 400.0,
+                "PER": 12.0,
+                "PSR": 2.1,
+                "POR": 9.5,
+                "PGPR": 8.0,
+                "부채비율(%)": 30.0,
+                "밸류순위평균": 15.0,
+                "성장순위평균": 10.5,
+                "Total Rank": 2,
+            },
+        ]
+    )
+    monkeypatch.setattr(
+        dashboard_app,
+        "load_cached_top20",
+        lambda **kwargs: ("2026-10-31", 200, mock_top20_df),
+    )
+
     class _MockTab4Streamlit:
         def __init__(self, button_clicked: bool = False) -> None:
             self.button_clicked = button_clicked
@@ -872,3 +944,32 @@ def test_tab4_renders_top20_preview_by_default(
     assert len(mock_st.plotly_charts) >= 1
 
 
+def test_diagnose_held_positions_risk_nonexistent_cache_fallback(
+    tmp_path: Path,
+) -> None:
+    """존재하지 않는 캐시 경로 전달 시에도 에러 없이 정상 폴백되는지 검증합니다."""
+    positions_df = pd.DataFrame([{"ticker": "000010", "name": "알파테크"}])
+    non_existent_cache = tmp_path / "does_not_exist.pkl"
+    diagnoses = diagnose_held_positions_risk(
+        positions_df,
+        db_path=tmp_path / "empty.db",
+        cache_path=non_existent_cache,
+    )
+    assert len(diagnoses) == 1
+    assert diagnoses[0]["debt_ratio"] == 0.0
+    assert diagnoses[0]["impairment_ratio"] == 0.0
+    assert diagnoses[0]["severity"] == "NORMAL"
+
+
+def test_load_cached_top20_nonexistent_cache_fallback(
+    tmp_path: Path,
+) -> None:
+    """존재하지 않는 캐시 경로 전달 시 load_cached_top20 이 예외 없이 폴백을 수행하는지 검증합니다."""
+    non_existent_cache = tmp_path / "does_not_exist.pkl"
+    latest_dt, count, df = load_cached_top20(
+        cache_path=non_existent_cache,
+        db_path=tmp_path / "empty.db",
+    )
+    assert latest_dt == "-"
+    assert count == 0
+    assert df.empty

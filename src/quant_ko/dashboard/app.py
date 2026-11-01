@@ -1105,7 +1105,10 @@ def _render_tab4_universe_and_status(db_path: str) -> None:
             f"기준일 **{latest_dt}** · Order B 유니버스 통과 **{univ_cnt} 종목** 중 상위 **{len(top20_df)} 종목** (재산출 완료)"
         )
     else:
-        latest_dt, univ_cnt, top20_df = load_cached_top20(db_path=db_path, top_n=20)
+        try:
+            latest_dt, univ_cnt, top20_df = load_cached_top20(db_path=db_path, top_n=20)
+        except Exception:
+            latest_dt, univ_cnt, top20_df = "-", 0, pd.DataFrame()
         if not top20_df.empty:
             st.info(
                 f"기준일 **{latest_dt}** · 최신 캐시 기준 9대 팩터 상위 **{len(top20_df)} 종목** (전체 재계산이 필요한 경우 상단 버튼 클릭)"
