@@ -14,24 +14,27 @@
    - **2차 재무 건전성 & 흑자 선필터**: TTM 영업이익 > 0, TTM 지배주주순이익 > 0, 자본잠식률 ≤ 0% (부채비율 상한 제한 없음, 분기흑자 강제 없음)
    - **3차 시총 후절삭 (Order B)**: 재무/흑자 필터를 통과한 우량 기업 모수 중에서 **시가총액 하위 20%** 소형주만 최종 유니버스로 절삭
    - **9대 팩터 스코어링**: 시가총액(1) + 밸류 4종(PER, PSR, POR, PGPR) + 성장 4종(매출액, 매출총이익, 영업이익, 지배주주순이익 YoY, 흑자전환 최우선) 합산 순위 상위 20종목 동일비중(각 5%) 편입
-3. **10.5개년 검증: 계절성 필터 (11\~4월 주식 적극 투자, 5\~10월 CD금리 ETF 파킹)**
+3. **10.5개년 검증: 계절성 필터 (11-4월 주식 적극 투자, 5-10월 CD금리 ETF 파킹)**
    - **누적 수익률**: **+416.17%** (원금 1,000만 원 → **5,161만 원**, 5.1배 달성)
    - **연복리 수익률(CAGR)**: **16.89%** (코스피 12.36%, 코스닥 1.66% 압도)
    - **최대 낙폭(MDD)**: **-40.08%** (코스피 -43.90%, 코스닥 -53.79% 대비 우수한 하락장 방어)
    - **KOSPI 상관계수**: **0.3375** (대형주/지수 하락장에 휩쓸리지 않는 강력한 시장 독립성 확보)
    - **연간 승률**: **81.8%** (11개년 중 9개년 플러스 마감)
-4. **한국투자증권 KIS Open API 연동 및 24시간 무인 자동화**
-   - 모의투자/실전투자 듀얼 분리 지원 (`KIS_MODE=MOCK` / `REAL`)
-   - 장마감 동시호가(15:20) 시장가 차이분 매매 및 Dry-Run 모의 실행 지원
-   - 평일 08:30 일일 관리/환기종목 비상 손절 감시 및 모닝 생존 확인(Heartbeat)
-   - 리밸런싱 D-1일 18:00 예정 타깃 20종목 사전 브리핑 및 실시간 주문 체결 디스코드 상세 알림
+4. **한국투자증권 KIS Open API 연동 및 실전 안전 장치**
+   - 모의투자/실전투자 듀얼 환경 분리 지원 (`--env mock` / `real`)
+   - 장마감 동시호가(15:20) +5% 지정가(`00`), KRX 가격대별 호가단위 자동 맞춤(`adjust_tick_price`) 및 상한가 캡
+   - 1.5% 안전 현금 버퍼(98.5% 매수 배분) 및 예수금 부족 시 1주 감량 안전 재시도
+   - KIS 토큰 만료 시 로컬 캐시 즉시 삭제 및 1회 자동 재발급 회복탄력성
+   - 당일 미체결 잔여 종목 익일 15:20 1회성 보충 매수 (`PENDING_CATCHUP`)
+5. **무인 운영 및 디스코드 상세 알림**
+   - 평일 08:30 일일 관리/환기종목 비상 감시 및 모닝 생존 확인(Heartbeat) 브리핑
+   - 리밸런싱 D-1일 18:00 예정 타깃 20종목 사전 브리핑 전송
+   - 당일 15:20 리밸런싱 실행 상세 리포트 (선정 종목, 매도/매수 내역, 실패 사유, 계좌 평가액)
    - 오라클 클라우드(OCI) Linux VM 24시간 크론탭 무인 자동화 가동
-5. **Streamlit + Plotly 올인원 실시간 모니터링 대시보드**
-   - 전체 자산 변화 추이 & 보유 포트폴리오 비중 실시간 시각화 (KIS API 연동)
-   - 10.5개년 일별 누적 자산 궤적, 언더워터 낙폭(MDD), KOSPI/KOSDAQ 상관관계 및 연도별 수익률 비교
-   - 실제 주문/체결 원장 3중 필터링 조회 및 CSV 내보내기
-   - 차기 리밸런싱 카운트다운 타이머(D-Day/시간/분) 및 보유 종목 긴급 리스크 진단 카드
-   - 실전 계좌 금액 마스킹 프라이버시 모드 지원
+6. **Streamlit + Plotly 올인원 실시간 모니터링 대시보드**
+   - 4대 탭 구성: 계좌&포트폴리오, 주문&리밸런싱 이력, 백테스트 성과 분석, 봇 운영 상태&유니버스 점검
+   - DB 오프라인 우선 조회 및 On-Demand 수동 동기화로 불필요한 KIS API 토큰 발급 원천 차단
+   - 차기 리밸런싱 카운트다운 배너, 보유 종목 긴급 리스크 진단 카드, 실전 계좌 금액 마스킹 프라이버시 모드
 
 ---
 
@@ -44,9 +47,9 @@ src/quant_ko/
   ├── strategy/    # Order B 유니버스 필터, 9대 팩터 스코어링 및 포트폴리오 산출
   ├── backtest/    # 10.5개년 백테스트 엔진, 거래비용 및 성과 리포터
   ├── broker/      # 한국투자증권 KIS Open API 연동 모듈 (모의/실전, 토큰 자동갱신)
-  ├── live/        # 월별 리밸런서, 일일 모니터링 봇, Dry-Run 실행기
+  ├── live/        # 월별 리밸런서(호가보정, 1주감량), 일일 모니터링 봇, Dry-Run 실행기
   ├── dashboard/   # Streamlit + Plotly 올인원 실시간 모니터링 대시보드
-  ├── notify/      # 디스코드 웹훅 알림 모듈
+  ├── notify/      # 디스코드 웹훅 알림 모듈 (메시지 청킹 지원)
   └── main.py      # 통합 운영 CLI 엔트리포인트
 ```
 
@@ -55,7 +58,7 @@ src/quant_ko/
 ## 🚀 빠른 시작
 
 ### 1. 가상환경 구성 및 패키지 설치
-`uv`를 통해 최신 의존성을 초고속으로 동기화합니다:
+`uv`를 통해 의존성을 동기화합니다:
 ```powershell
 uv sync
 ```
@@ -66,7 +69,7 @@ uv sync
 OPENDART_API_KEY=your_dart_api_key
 
 # 한국투자증권 실전/모의 계좌 설정 (MOCK 또는 REAL)
-KIS_MODE=MOCK
+KIS_MODE=REAL
 
 # 모의투자 설정
 KIS_MOCK_APP_KEY=your_mock_app_key
@@ -92,16 +95,22 @@ uv run streamlit run src/quant_ko/dashboard/app.py
 ### 4. 실전 / 모의 운영 CLI 명령어
 ```powershell
 # 1. 현재 계좌 잔고 및 전략 상태 확인
-uv run python -m quant_ko.main --mode status
+uv run python -m quant_ko.main --mode status --env real
 
-# 2. 리밸런싱 가상 모의 실행 (주문 전송 없이 20종목 수량 계산 및 로그 검증)
-uv run python -m quant_ko.main --mode rebalance --dry-run
+# 2. 리밸런싱 Dry-Run 모의 검증 (실제 주문 없이 20종목 수량 계산 및 로그 검증)
+uv run python -m quant_ko.main --mode rebalance --env real --strategy seasonality --dry-run
 
-# 3. 실전 리밸런싱 실행 (매월 마지막 영업일 15:20)
-uv run python -m quant_ko.main --mode rebalance
+# 3. 리밸런싱 D-1 사전 브리핑 발송 (매월 마지막 평일 D-1 18:00)
+uv run python -m quant_ko.main --mode rebalance --env real --strategy seasonality --preview
 
-# 4. 일일 관리종목/환기종목 비상 감시 (평일 08:30)
-uv run python -m quant_ko.main --mode monitor
+# 4. 실전 리밸런싱 실행 (매월 마지막 영업일 15:20)
+uv run python -m quant_ko.main --mode rebalance --env real --strategy seasonality
+
+# 5. 미체결 보충 매수 실행 (익일 15:20)
+uv run python -m quant_ko.main --mode rebalance --env real --strategy seasonality --catchup
+
+# 6. 일일 관리/환기종목 비상 감시 (평일 08:30)
+uv run python -m quant_ko.main --mode monitor --env real
 ```
 
 ---
@@ -112,9 +121,9 @@ uv run python -m quant_ko.main --mode monitor
 
 | 실행 시각 | 실행 모드 | 주요 동작 |
 | :--- | :--- | :--- |
-| **평일 08:30** | `monitor` | 보유 종목 관리/환기종목 지정 여부 감시 (적발 시 시장가 즉시 전량 청산) 및 모닝 생존 확인 브리핑 전송 |
-| **매월 마지막 평일 D-1 18:00** | `rebalance --mode preview` | 차일 리밸런싱 예정 타깃 20종목 및 예수금 상태 사전 브리핑 |
-| **매월 마지막 평일 15:20** | `rebalance` | 장마감 동시호가 시장가 차이분 주문 실행 및 결과 리포트 전송 (5\~10월 파킹기엔 `357870` ETF 매매) |
+| **평일 08:30** | `monitor --env real` | 보유 종목 관리/환기종목 지정 여부 감시 (적발 시 시장가 즉시 전량 청산) 및 모닝 생존 확인 브리핑 전송 |
+| **평일 15:20** | `rebalance --env real --strategy seasonality` | 매월 말일 리밸런싱 실행 (5-10월 파킹기엔 `357870` ETF 매매) 및 익일 1회성 미체결 잔여 종목 보충 매수 |
+| **평일 18:00** | `rebalance --env real --strategy seasonality --preview` | 리밸런싱 D-1 예정 타깃 20종목 및 예수금 상태 사전 브리핑 (말일 전일일 때만 자동 발송) |
 
 ---
 

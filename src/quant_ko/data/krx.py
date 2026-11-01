@@ -1,7 +1,7 @@
-"""KRX Data Collector and Ingestion Module.
+"""KRX 시장 데이터 수집 및 정제 인제스터 모듈.
 
-Handles ticker listing, price history, market capitalization, designations,
-and exclusion filtering according to PRD strategy requirements.
+상장 종목 목록, 일별 시세(종가, 시가총액, 거래대금), 특이종목 지정 내역 수집 및
+전략 제외 종목(우선주, 스팩, 중국계 기업, 지주/금융사) 필터링 태깅을 수행합니다.
 """
 
 from typing import Any
@@ -9,7 +9,7 @@ from typing import Any
 import pandas as pd
 import requests
 
-# Known Chinese companies listed on Korean exchanges (KOSPI/KOSDAQ)
+# 국내 증시(코스피/코스닥) 상장 중국계 기업 목록
 CHINESE_COMPANY_NAMES = {
     "GRT",
     "골든센츄리",
@@ -32,7 +32,7 @@ CHINESE_COMPANY_NAMES = {
     "JTC",
 }
 
-# Known holding companies that may not end with '홀딩스' or '지주'
+# 사명에 '홀딩스' 또는 '지주'가 포함되지 않는 주요 순수/사업 지주사 목록
 KNOWN_HOLDING_COMPANIES = {
     "한진칼",
     "CJ",
@@ -77,13 +77,13 @@ ETF_NAME_PREFIXES = (
 
 
 def normalize_date(val: Any) -> str:
-    """Normalize various date formats (e.g. '20240102', '2024.01.02') into 'YYYY-MM-DD'."""
+    """다양한 날짜 형식(예: '20240102', '2024.01.02')을 'YYYY-MM-DD' 표준 형식으로 정규화합니다."""
     if not val:
         return ""
     s = str(val).strip()
     if not s:
         return ""
-    # Remove separators
+    # 구분자 제거
     s_clean = s.replace("-", "").replace(".", "").replace("/", "")
     if len(s_clean) == 8 and s_clean.isdigit():
         return f"{s_clean[:4]}-{s_clean[4:6]}-{s_clean[6:]}"
@@ -91,7 +91,7 @@ def normalize_date(val: Any) -> str:
 
 
 def clean_price_val(val: Any) -> float:
-    """Parse numeric values from KRX formatted strings (e.g. '79,600', '-') into float."""
+    """KRX 시세 수치 문자열(예: '79,600', '-')을 실수(float)로 변환합니다."""
     if val is None:
         return 0.0
     if isinstance(val, (int, float)):
@@ -106,7 +106,7 @@ def clean_price_val(val: Any) -> float:
 
 
 def is_etf_or_etn(name: str, sec_type: str = "") -> bool:
-    """Determine if security is an ETF, ETN, or ELW derivative."""
+    """종목이 ETF, ETN, ELW 등 파생/수익증권 상품인지 여부를 판별합니다."""
     type_upper = (sec_type or "").upper().strip()
     if any(t in type_upper for t in ("ETF", "ETN", "ELW", "신주인수권")):
         return True
@@ -119,14 +119,14 @@ def is_etf_or_etn(name: str, sec_type: str = "") -> bool:
 
 
 def is_preferred_stock(ticker: str, name: str = "") -> bool:
-    """Determine if a stock is a preferred share.
+    """종목이 우선주인지 여부를 판별합니다.
 
-    In the KRX numbering convention, common stocks end in '0'.
-    Preferred shares end in non-zero numbers ('5', '7', '9') or characters ('K', 'L', 'M').
+    KRX 종목코드 체계상 보통주는 끝자리가 '0'이며, 우선주는 '5', '7', '9' 등 0이 아닌 숫자나
+    'K', 'L' 등의 알파벳으로 끝납니다. 또한 사명 끝자리 '우', '우B' 등을 추가 판별합니다.
     """
     if not ticker:
         return False
-    # Standard KRX rule: Common stocks end with '0'
+    # KRX 표준 규칙: 보통주는 '0'으로 끝남
     if not ticker.endswith("0"):
         return True
     if name:
@@ -137,7 +137,7 @@ def is_preferred_stock(ticker: str, name: str = "") -> bool:
 
 
 def is_spac(name: str, ticker: str = "") -> bool:
-    """Determine if a stock is a SPAC (Special Purpose Acquisition Company)."""
+    """종목이 기업인수목적회사(스팩, SPAC)인지 여부를 판별합니다."""
     if not name:
         return False
     upper_name = name.upper().strip()
@@ -145,20 +145,19 @@ def is_spac(name: str, ticker: str = "") -> bool:
 
 
 def is_chinese_company(name: str, ticker: str = "") -> bool:
-    """Determine if a stock represents a Chinese-headquartered / high-risk foreign entity."""
+    """종목이 중국계 기업 또는 고위험 외국 기업인지 여부를 판별합니다 (900xxx 코드 및 사명 검사)."""
     if "차이나" in name:
         return True
     if name in CHINESE_COMPANY_NAMES:
         return True
-    if ticker:
-        # KRX foreign (predominantly Chinese) stock codes start with 900xxx
-        if ticker.startswith("900"):
-            return True
+    if ticker and ticker.startswith("900"):
+        # KRX 외국기업(주로 중국계) 종목코드는 900xxx로 시작함
+        return True
     return False
 
 
 def is_holding_or_financial(sector: str = "", name: str = "") -> bool:
-    """Determine if a company is in financial or holding company sectors."""
+    """기업이 금융업 또는 지주회사 섹터에 해당하는지 여부를 판별합니다."""
     clean_sec = (sector or "").strip()
     clean_nm = (name or "").strip()
 
@@ -181,7 +180,7 @@ def tag_stock(
     sector: str = "",
     market: str = "",
 ) -> dict[str, Any]:
-    """Tag stock metadata with exclusion flags required by the quant-ko strategy."""
+    """퀀트 전략 유니버스 필터링에 필요한 제외 대상 플래그를 생성하여 메타데이터에 태깅합니다."""
     pref = is_preferred_stock(ticker, name)
     spac = is_spac(name, ticker)
     chinese = is_chinese_company(name, ticker)
@@ -203,11 +202,11 @@ def tag_stock(
 
 
 class KrxAPIError(Exception):
-    """Exception raised when KRX API or scraping requests fail."""
+    """KRX 데이터 요청 또는 스크래핑 실패 시 발생하는 예외."""
 
 
 def normalize_designation_type(raw_type: str) -> str:
-    """Normalize designation type name into standard types: 관리, 투자주의환기, 거래정지."""
+    """원천 지정 사유명을 표준 지정 유형('관리', '투자주의환기', '거래정지')으로 정규화합니다."""
     s = (raw_type or "").strip()
     if "관리" in s:
         return "관리"
@@ -219,7 +218,7 @@ def normalize_designation_type(raw_type: str) -> str:
 
 
 class KrxClient:
-    """Client for fetching stock metadata, daily market data, and designations from KRX."""
+    """KRX 포털 스크래핑을 통해 종목 메타데이터, 일별 시세, 특이종목 지정을 조회하는 클라이언트."""
 
     DEFAULT_BASE_URL = "http://data.krx.co.kr/comm/bldAttPage/getJsonData.cmd"
 
@@ -248,7 +247,7 @@ class KrxClient:
             )
 
     def _post(self, data: dict[str, Any]) -> dict[str, Any]:
-        """Send POST request to KRX scraping endpoint."""
+        """KRX 데이터 스크래핑 엔드포인트로 POST 요청을 전송합니다."""
         if self.offline:
             return {"OutBlock_1": []}
         try:
@@ -269,7 +268,7 @@ class KrxClient:
         date: str | None = None,
         common_only: bool = False,
     ) -> pd.DataFrame:
-        """Fetch list of listed tickers on KRX (KOSPI, KOSDAQ)."""
+        """KRX 상장 종목 목록(코스피, 코스닥)을 조회합니다."""
         mkt_code_map = {"ALL": "ALL", "KOSPI": "STK", "KOSDAQ": "KSQ"}
         mkt_id = mkt_code_map.get(market.upper(), market)
 
@@ -296,7 +295,7 @@ class KrxClient:
             if not ticker:
                 continue
 
-            # Exclude KONEX from universe
+            # 코넥스(KONEX) 시장 종목은 유니버스에서 제외
             if mkt.upper() == "KONEX":
                 continue
 
@@ -306,10 +305,9 @@ class KrxClient:
             chinese = 1 if is_chinese_company(name, ticker) else 0
             fin_hold = 1 if is_holding_or_financial(sec, name) else 0
 
-            if common_only:
-                # Common stocks only: exclude preferred, spac, etf, chinese companies
-                if pref or spac or etf or chinese:
-                    continue
+            # 보통주 전용 필터: 우선주, 스팩, ETF, 중국계 기업 제외
+            if common_only and (pref or spac or etf or chinese):
+                continue
 
             rows.append(
                 {
@@ -336,7 +334,7 @@ class KrxClient:
         end_date: str | None = None,
         common_only: bool = False,
     ) -> pd.DataFrame:
-        """Fetch historical delisted tickers."""
+        """역대 상장폐지 종목 목록을 조회합니다."""
         payload = {
             "bld": "dbms/MDC/STAT/standard/MDCSTAT02001",
             "mktId": "ALL",
@@ -392,7 +390,7 @@ class KrxClient:
         date: str,
         market: str = "ALL",
     ) -> pd.DataFrame:
-        """Fetch daily prices and market caps for all stocks on a given trading day."""
+        """특정 영업일의 전 종목 일별 시세(종가, 시가총액, 거래대금)를 조회합니다."""
         mkt_code_map = {"ALL": "ALL", "KOSPI": "STK", "KOSDAQ": "KSQ"}
         mkt_id = mkt_code_map.get(market.upper(), market)
         norm_date = normalize_date(date)
@@ -438,7 +436,7 @@ class KrxClient:
         date: str | None = None,
         as_of_date: str | None = None,
     ) -> pd.DataFrame:
-        """Fetch special issue designations (관리종목, 투자주의환기종목, 거래정지)."""
+        """특이종목 지정 내역(관리종목, 투자주의환기종목, 거래정지)을 조회합니다."""
         payload = {
             "bld": "dbms/MDC/STAT/issue/MDCSTAT02401",
             "mktId": "ALL",
@@ -475,7 +473,7 @@ class KrxClient:
 
 
 class KrxIngestor:
-    """Ingests KRX market data into DataStore."""
+    """KRX 수집 데이터를 DataStore에 저장하는 인제스터 클래스."""
 
     def __init__(self, client: KrxClient, store: Any) -> None:
         self.client = client
@@ -488,7 +486,7 @@ class KrxIngestor:
         common_only: bool = False,
         ticker_to_corp_code: dict[str, str] | None = None,
     ) -> int:
-        """Fetch active (and optionally delisted) stocks and store them in DataStore."""
+        """활성 상장 종목(및 상장폐지 종목)을 수집하여 DataStore에 적재합니다."""
         active_df = self.client.fetch_ticker_list(market=market, common_only=common_only)
         all_dfs = [active_df]
 
@@ -501,7 +499,7 @@ class KrxIngestor:
         if combined.empty:
             return 0
 
-        # Drop duplicates by ticker keeping last
+        # 종목코드 기준 중복 제거 (최신 레코드 유지)
         combined = combined.drop_duplicates(subset=["ticker"], keep="last")
 
         if "corp_code" not in combined.columns:
@@ -520,7 +518,7 @@ class KrxIngestor:
         date: str,
         market: str = "ALL",
     ) -> int:
-        """Fetch daily prices for a given date and store them in DataStore."""
+        """지정된 일자의 전 종목 시세를 수집하여 DataStore에 적재합니다."""
         prices_df = self.client.fetch_daily_prices(date=date, market=market)
         if prices_df.empty:
             return 0
@@ -531,7 +529,12 @@ class KrxIngestor:
         self,
         date: str | None = None,
     ) -> int:
-        """Fetch designations and store them in DataStore."""
+        """특이종목 지정 내역을 수집하여 DataStore에 적재합니다."""
+        desig_df = self.client.fetch_designations(date=date)
+        if desig_df.empty:
+            return 0
+        self.store.upsert_designations(desig_df)
+        return len(desig_df)
         desig_df = self.client.fetch_designations(date=date)
         if desig_df.empty:
             return 0

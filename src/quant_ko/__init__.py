@@ -1,1 +1,1 @@
-"""quant-ko package."""
+"""한국 주식 퀀트 투자 시스템 (quant-ko) 패키지."""

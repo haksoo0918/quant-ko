@@ -1,4 +1,4 @@
-"""Performance metrics calculation and benchmark comparison."""
+"""포트폴리오 성과 지표 산출 및 벤치마크 지수 비교 모듈."""
 
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -10,7 +10,7 @@ import pandas as pd
 
 @dataclass
 class PerformanceMetrics:
-    """Summary of backtest portfolio performance metrics."""
+    """백테스트 포트폴리오 성과 지표 요약(수익률, CAGR, MDD, 샤프 지수, 승률, 회전율 등)."""
 
     initial_capital: float
     final_equity: float
@@ -30,7 +30,7 @@ class PerformanceMetrics:
 
 @dataclass
 class BenchmarkComparison:
-    """Comparison results between portfolio and benchmark."""
+    """포트폴리오와 벤치마크 지수 간의 비교 분석 결과(수익률, 상관계수, 알파, 베타 등)."""
 
     benchmark_name: str
     benchmark_return: float
@@ -48,7 +48,17 @@ def calculate_metrics(
     initial_capital: float = 10_000_000.0,
     risk_free_rate: float = 0.035,
 ) -> PerformanceMetrics:
-    """Calculate standard quantitative portfolio metrics."""
+    """포트폴리오 자산 평가 이력으로부터 표준 퀀트 성과 지표를 산출합니다.
+
+    Args:
+        equity_history: 일별 포트폴리오 평가액 DataFrame (date, equity 컬럼 필수).
+        rebalance_records: 리밸런싱 실행 기록 목록 (회전율 및 기간 수익률 계산용, 선택 사항).
+        initial_capital: 초기 투자 자본금 (기본값: 10,000,000원).
+        risk_free_rate: 샤프 지수 산출용 무위험 수익률 (기본값: 연 3.5%).
+
+    Returns:
+        종합 성과 지표 객체(PerformanceMetrics).
+    """
     if equity_history.empty:
         return PerformanceMetrics(
             initial_capital=initial_capital,
@@ -78,7 +88,7 @@ def calculate_metrics(
 
     cagr = ((final_equity / initial_capital) ** (365.25 / total_days)) - 1.0
 
-    # MDD calculation
+    # MDD(최대 낙폭) 산출
     running_max = equity.cummax()
     drawdowns = (equity - running_max) / running_max
     mdd = float(drawdowns.min())
@@ -88,7 +98,7 @@ def calculate_metrics(
     mdd_peak_date = str(df.loc[peak_idx, "date"])[:10]
     mdd_trough_date = str(df.loc[trough_idx, "date"])[:10]
 
-    # Volatility & Sharpe
+    # 연환산 변동성 및 샤프 지수 산출
     daily_returns = equity.pct_change().dropna()
     if len(daily_returns) > 1 and daily_returns.std() > 0:
         annualized_vol = float(daily_returns.std() * np.sqrt(252))
@@ -97,14 +107,14 @@ def calculate_metrics(
         annualized_vol = 0.0
         sharpe = 0.0
 
-    # Turnover
+    # 평균 회전율 산출
     if rebalance_records:
         turnovers = [r.get("turnover_rate", 0.0) for r in rebalance_records if "turnover_rate" in r]
         avg_turnover = float(np.mean(turnovers)) if turnovers else 0.0
     else:
         avg_turnover = 0.0
 
-    # Yearly returns
+    # 연도별 수익률 산출
     df["year"] = pd.to_datetime(df["date"]).dt.year
     yearly_returns: dict[int, float] = {}
     grouped = df.groupby("year")
@@ -123,7 +133,7 @@ def calculate_metrics(
         else 0.0
     )
 
-    # Rebalance period returns
+    # 리밸런싱 주기별 수익률 산출
     period_returns: dict[str, float] = {}
     if rebalance_records and len(rebalance_records) > 0:
         date_to_equity = dict(zip(df["date"].astype(str).str[:10], df["equity"], strict=False))
@@ -134,7 +144,7 @@ def calculate_metrics(
             lbl = labels[i]
             eq_start = date_to_equity.get(reb_d)
             if eq_start is None:
-                # Find closest on or after reb_d
+                # 리밸런싱 당일 또는 이후 가장 가까운 평가액 탐색
                 sub = df[df["date"] >= reb_d]
                 eq_start = float(sub["equity"].iloc[0]) if not sub.empty else None
 
@@ -179,8 +189,18 @@ def compare_benchmark(
     benchmark_name: str = "KOSDAQ",
     risk_free_rate: float = 0.035,
 ) -> BenchmarkComparison:
-    """Compare portfolio daily returns against a benchmark index."""
-    # Align dates
+    """포트폴리오 일별 수익률과 벤치마크 지수 수익률을 비교 분석합니다.
+
+    Args:
+        portfolio_equity: 일별 포트폴리오 평가액 DataFrame.
+        benchmark_prices: 벤치마크 지수 일별 종가 DataFrame (date, close 컬럼 필수).
+        benchmark_name: 벤치마크 명칭 (기본값: "KOSDAQ").
+        risk_free_rate: 무위험 수익률 (기본값: 연 3.5%).
+
+    Returns:
+        벤치마크 비교 분석 결과(BenchmarkComparison).
+    """
+    # 날짜 기준 데이터 정합
     port = portfolio_equity[["date", "equity"]].copy()
     port["date"] = port["date"].astype(str).str[:10]
     bench = benchmark_prices[["date", "close"]].rename(columns={"close": "bench_close"}).copy()
@@ -225,7 +245,7 @@ def compare_benchmark(
     if var_b > 0 and len(p_daily) > 1:
         cov = float(p_daily.cov(b_daily))
         beta = cov / var_b
-        # Annualized alpha: Portfolio Ann Return - (rf + beta * (Benchmark Ann Return - rf))
+        # 연환산 젠센 알파: 포트폴리오 연환산 수익률 - (무위험수익률 + 베타 * (벤치마크 연환산 수익률 - 무위험수익률))
         p_cagr = ((merged["equity"].iloc[-1] / merged["equity"].iloc[0]) ** (365.25 / days)) - 1.0
         alpha = p_cagr - (risk_free_rate + beta * (b_cagr - risk_free_rate))
     else:

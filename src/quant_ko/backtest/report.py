@@ -1,4 +1,4 @@
-"""Backtest performance reporting generator (terminal and markdown)."""
+"""백테스트 성과 분석 보고서 생성 모듈 (마크다운 및 터미널 텍스트 형식)."""
 
 from typing import Literal
 
@@ -6,12 +6,14 @@ from quant_ko.backtest.metrics import BenchmarkComparison, PerformanceMetrics
 
 
 def _format_pct(val: float | None) -> str:
+    """비율 수치를 백분율 문자열(%)로 포맷팅합니다."""
     if val is None:
         return "N/A"
     return f"{val * 100:.2f}%"
 
 
 def _format_krw(val: float | None) -> str:
+    """금액 수치를 원화(KRW) 문자열로 포맷팅합니다."""
     if val is None:
         return "N/A"
     return f"{val:,.0f} KRW"
@@ -23,7 +25,17 @@ def generate_report(
     title: str = "Backtest Performance Report",
     format_type: Literal["markdown", "text"] = "markdown",
 ) -> str:
-    """Generate a formatted performance summary report in markdown or plain text."""
+    """백테스트 성과 요약 보고서를 마크다운 또는 텍스트 형식으로 생성합니다.
+
+    Args:
+        metrics: 산출된 포트폴리오 성과 지표 객체.
+        benchmarks: 비교 대상 벤치마크 지수 결과 목록 (선택 사항).
+        title: 보고서 제목 (기본값: "Backtest Performance Report").
+        format_type: 출력 포맷 ("markdown" 또는 "text", 기본값: "markdown").
+
+    Returns:
+        포맷팅된 성과 보고서 문자열.
+    """
     benchmarks = benchmarks or []
 
     if format_type == "markdown":

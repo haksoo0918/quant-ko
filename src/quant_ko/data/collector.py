@@ -1,7 +1,7 @@
-"""Data ingestion and collection runner module.
+"""데이터 수집 파이프라인 및 CLI 실행 모듈.
 
-Coordinates data gathering from KRX, FinanceDataReader, and OpenDART,
-persisting standardized records to SQLite DataStore.
+KRX 포털, FinanceDataReader, OpenDART API로부터 상장 종목, 일별 시세,
+재무제표 데이터를 수집하고 정제하여 SQLite DataStore에 적재합니다.
 """
 
 import datetime
@@ -28,7 +28,7 @@ logger = logging.getLogger(__name__)
 
 
 class DataCollector:
-    """Orchestrator for KRX, OpenDART, and price data ingestion into DataStore."""
+    """KRX 상장종목, 일별 주가 시세, OpenDART 분기 재무제표 수집 오케스트레이터."""
 
     def __init__(
         self,
@@ -47,7 +47,7 @@ class DataCollector:
         market: str = "ALL",
         include_delisted: bool = True,
     ) -> int:
-        """Fetch KRX companies, apply filtering tags, map corp_code, and store in DB."""
+        """KRX 상장 기업(및 상장폐지 기업)을 수집하고, 제외 대상 플래그 태깅 및 DART corp_code를 매핑하여 DB에 적재합니다."""
         dfs: list[pd.DataFrame] = []
 
         if self.krx_client is not None:
@@ -62,7 +62,7 @@ class DataCollector:
                 except Exception as exc:
                     logger.warning("Failed to fetch delisted tickers: %s", exc)
         else:
-            # Fallback to FinanceDataReader
+            # FinanceDataReader 대체 수집
             try:
                 import FinanceDataReader as fdr
 
@@ -83,14 +83,14 @@ class DataCollector:
         combined = pd.concat(dfs, ignore_index=True)
         combined = combined.drop_duplicates(subset=["ticker"], keep="last")
 
-        # Ensure required columns
+        # 필수 컬럼 존재 보장 및 우선주/스팩 여부 산출
         if "is_preferred" not in combined.columns:
             combined["is_preferred"] = combined.apply(
                 lambda r: 1 if is_preferred_stock(str(r["ticker"]), str(r.get("name", ""))) else 0,
                 axis=1,
             )
         else:
-            # Recalculate/ensure if empty or null
+            # 누락되거나 비어있는 경우 재산출
             combined["is_preferred"] = combined.apply(
                 lambda r: (
                     1
@@ -116,7 +116,7 @@ class DataCollector:
                 axis=1,
             )
 
-        # Map OpenDART corp_code if DartClient provided
+        # DartClient가 제공된 경우 OpenDART 8자리 corp_code 매핑
         if self.dart_client is not None:
             try:
                 ticker_to_corp = self.dart_client.get_ticker_to_corp_code(only_listed=False)
@@ -140,7 +140,7 @@ class DataCollector:
         quarters: Sequence[int] = (1, 2, 3, 4),
         fs_types: tuple[str, ...] = ("CFS", "OFS"),
     ) -> int:
-        """Fetch quarterly and annual financials with graceful checkpointing and resume."""
+        """분기 및 사업보고서 재무제표를 체크포인트 기반으로 수집하고 저장합니다 (기수집 건 건너뛰기 지원)."""
         if self.dart_client is None:
             logger.warning("DartClient not configured; skipping financials collection.")
             return 0
@@ -155,7 +155,7 @@ class DataCollector:
             for year in range(start_year, end_year + 1):
                 for qtr in quarters:
                     processed += 1
-                    # Check if already present in store
+                    # 이미 저장소에 존재하는지 확인
                     existing = self.store.get_financials(
                         corp_code=corp_code,
                         fiscal_year=year,
@@ -170,7 +170,7 @@ class DataCollector:
                         )
                         continue
 
-                    # Try primary (CFS) then fallback (OFS)
+                    # 연결재무제표(CFS) 우선 시도 후 별도재무제표(OFS) 대체 시도
                     data = None
                     for fs_type in fs_types:
                         try:
@@ -216,7 +216,7 @@ class DataCollector:
         end_date: str,
         price_source_fn: Any = None,
     ) -> int:
-        """Fetch daily price, volume, and market cap records with checkpointing and resume."""
+        """종목별 일별 주가 시세(종가, 거래대금, 시가총액)를 체크포인트 기반으로 수집하여 저장합니다."""
         norm_start = normalize_date(start_date)
         norm_end = normalize_date(end_date)
         total_saved = 0
@@ -303,7 +303,7 @@ class DataCollector:
         end_date: str | None = None,
         price_source_fn: Any = None,
     ) -> int:
-        """Fetch historical daily prices for benchmark index (default KOSDAQ index KQ11)."""
+        """벤치마크 지수(기본값: 코스닥 지수 KQ11)의 일별 종가 시세를 수집합니다."""
         if end_date is None:
             end_date = pd.Timestamp.now().strftime("%Y-%m-%d")
         return self.collect_daily_prices(
@@ -318,7 +318,7 @@ class DataCollector:
         as_of_date: str | None = None,
         quantile: float = 0.20,
     ) -> list[str]:
-        """Identify bottom quantile of common stocks by market cap after exclusion filtering."""
+        """전략 제외 필터를 통과한 보통주 중 시가총액 하위 분위(기본: 하위 20%) 소형주 풀을 추출합니다."""
         companies_df = self.store.get_companies()
         if companies_df.empty:
             return []
@@ -331,7 +331,7 @@ class DataCollector:
             name = str(row.get("name") or "").strip()
             sector = str(row.get("sector") or "").strip()
 
-            # Exclusion checks
+            # 제외 조건 점검
             if row.get("is_preferred") == 1 or is_preferred_stock(ticker, name):
                 continue
             if row.get("is_spac") == 1 or is_spac(name, ticker):
@@ -369,12 +369,12 @@ class DataCollector:
 
         valid_df = pd.DataFrame(valid_rows)
 
-        # Get prices to determine market cap
+        # 시가총액 확인을 위한 일별 시세 조회
         price_df = self.store.get_daily_prices(end_date=norm_date)
         if price_df.empty:
             return []
 
-        # Find latest market cap per ticker
+        # 종목별 최신 시가총액 추출
         latest_caps: list[dict[str, Any]] = []
         for ticker, group in price_df.groupby("ticker"):
             sorted_group = group.sort_values("date", ascending=True)
@@ -404,7 +404,7 @@ class DataCollector:
         price_end_date: str | None = None,
         price_source_fn: Any = None,
     ) -> dict[str, Any]:
-        """Run complete data ingestion pipeline: companies -> prices -> small-cap -> financials."""
+        """전체 데이터 수집 파이프라인(상장종목 -> 벤치마크 시세 -> 소형주 풀 식별 -> 일별 주가 -> DART 재무제표)을 순차 실행합니다."""
         logger.info(
             "Starting data collection pipeline: years %d-%d, quantile=%.2f",
             start_year,
@@ -412,16 +412,16 @@ class DataCollector:
             quantile,
         )
 
-        # 1. Collect and tag all companies
+        # 1. 전체 상장 기업 수집 및 제외 태깅
         companies_count = self.collect_companies()
 
-        # Date range defaults
+        # 수집 기간 기본값 설정
         if price_start_date is None:
             price_start_date = f"{start_year}-01-01"
         if price_end_date is None:
             price_end_date = f"{end_year}-12-31"
 
-        # 2. Collect benchmark index prices
+        # 2. 벤치마크 지수 시세 수집
         benchmark_prices_count = self.collect_benchmark_prices(
             benchmark_ticker=benchmark_ticker,
             start_date=price_start_date,
@@ -429,14 +429,14 @@ class DataCollector:
             price_source_fn=price_source_fn,
         )
 
-        # 3. Identify bottom quantile small-cap pool
+        # 3. 시가총액 하위 분위 소형주 타깃 풀 추출
         small_cap_tickers = self.identify_small_cap_pool(
             as_of_date=as_of_date,
             quantile=quantile,
         )
         logger.info("Identified %d small-cap target tickers", len(small_cap_tickers))
 
-        # 4. Fetch daily prices for target pool
+        # 4. 타깃 종목 일별 주가 시세 수집
         target_prices_count = self.collect_daily_prices(
             tickers=small_cap_tickers,
             start_date=price_start_date,
@@ -444,7 +444,7 @@ class DataCollector:
             price_source_fn=price_source_fn,
         )
 
-        # 5. Fetch DART financials for target pool
+        # 5. 타깃 종목 DART 재무제표 수집
         financials_count = 0
         if small_cap_tickers and self.dart_client is not None:
             comp_df = self.store.get_companies(tickers=small_cap_tickers)
@@ -470,7 +470,7 @@ class DataCollector:
 
 
 def main(argv: list[str] | None = None) -> int:
-    """CLI runner entry point for quant-ko data collection."""
+    """데이터 수집 파이프라인 명령줄 인터페이스(CLI) 진입점."""
     import argparse
     import os
 
