@@ -750,10 +750,13 @@ def load_cached_top20(
     Returns:
         `(latest_date, universe_count, top_df)` 튜플.
     """
-    cache_candidates = [
-        Path(cache_path),
-        Path(__file__).resolve().parents[3] / "data" / "monthly_targets_cache.pkl",
-    ]
+    p = Path(cache_path)
+    cache_candidates = [p]
+    default_p = Path("data/monthly_targets_cache.pkl")
+    if p == default_p and not p.exists():
+        fallback_p = Path(__file__).resolve().parents[3] / "data" / "monthly_targets_cache.pkl"
+        if fallback_p.exists():
+            cache_candidates.append(fallback_p)
     for c_path in cache_candidates:
         if c_path.exists():
             try:
@@ -805,7 +808,11 @@ def load_cached_top20(
             except Exception as exc:
                 logger.warning("월별 타깃 캐시 로드 실패: %s", exc)
 
-    return load_top20_preview(db_path=db_path, top_n=top_n)
+    try:
+        return load_top20_preview(db_path=db_path, top_n=top_n)
+    except Exception as exc:
+        logger.warning("DB 기반 상위 20종목 프리뷰 로드 실패: %s", exc)
+        return ("-", 0, pd.DataFrame())
 
 
 def get_next_rebalance_countdown(
@@ -861,8 +868,18 @@ def get_next_rebalance_countdown(
 def diagnose_held_positions_risk(
     positions_df: pd.DataFrame,
     db_path: str | Path = "data/quant_ko.db",
+    cache_path: str | Path = "data/monthly_targets_cache.pkl",
 ) -> list[dict[str, Any]]:
-    """보유 종목에 대해 관리종목·투자주의환기종목 지정 여부 및 재무 건전성 위험을 실시간 진단합니다."""
+    """보유 종목에 대해 관리종목·투자주의환기종목 지정 여부 및 재무 건전성 위험을 실시간 진단합니다.
+
+    Args:
+        positions_df: 진단 대상 보유 종목 DataFrame (ticker 컬럼 필수).
+        db_path: SQLite 데이터베이스 파일 경로.
+        cache_path: 월별 타깃 캐시 파일 경로.
+
+    Returns:
+        종목별 위험 진단 결과 리스트.
+    """
     diagnoses: list[dict[str, Any]] = []
     if positions_df.empty:
         return diagnoses
@@ -887,10 +904,13 @@ def diagnose_held_positions_risk(
     # 2. 최신 재무제표(부채비율 및 자본잠식률) 조회
     # 2-1. monthly_targets_cache.pkl 캐시 우선 조회 (사전 계산된 debt_ratio 및 impairment_ratio)
     fin_map: dict[str, dict[str, float]] = {}
-    cache_candidates = [
-        Path("data/monthly_targets_cache.pkl"),
-        Path(__file__).resolve().parents[3] / "data" / "monthly_targets_cache.pkl",
-    ]
+    p = Path(cache_path)
+    cache_candidates = [p]
+    default_p = Path("data/monthly_targets_cache.pkl")
+    if p == default_p and not p.exists():
+        fallback_p = Path(__file__).resolve().parents[3] / "data" / "monthly_targets_cache.pkl"
+        if fallback_p.exists():
+            cache_candidates.append(fallback_p)
     for c_path in cache_candidates:
         if c_path.exists():
             try:
