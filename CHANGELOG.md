@@ -5,6 +5,19 @@
 
 ---
 
+## [1.6.2] - 2026-11-02
+
+### 추가 및 개선 (Added & Changed)
+- **배포 환경(Streamlit Cloud) 데이터 연속성 및 시드 번들링 (`data/real_orders_seed.json`, `data/targets_latest.json`)**:
+  - Git 미추적 SQLite DB 및 캐시 파일이 없는 Streamlit Cloud 컨테이너 환경을 위해 10/30 실전 체결 19종목 원장(`data/real_orders_seed.json`)과 10월말 기준 최신 9대 팩터 타깃 20종목 스냅샷(`data/targets_latest.json`)을 번들링하여 Git 추적 대상에 포함.
+  - 신규 환경 또는 DB 부재 시 기동 즉시 SQLite `orders` 테이블에 실전 체결 내역을 자동 적재하여 Tab 2 거래기록 19건 및 Tab 4 타깃 20종목/산점도 즉시 표출 보장.
+- **Streamlit Secrets 완전 평탄화 및 KIS 연동 에러 가시화 (`src/quant_ko/dashboard/app.py`)**:
+  - `st.secrets`의 중첩 딕셔너리 섹션을 재귀적으로 탐색/평탄화하여 `os.environ`에 `KIS_MODE`, `KIS_REAL_*` 환경변수 완전 주입.
+  - KIS 실시간 연동 실패 시 에러를 조용히 은폐하지 않고 상단에 명확한 진단 경고 박스(오류 내용, Secrets 누락/해외 IP 차단 안내)를 표시하여 투명성 확보.
+- **실전 계좌 자산 곡선 및 잔고 정합성 보정 (`src/quant_ko/dashboard/data_loader.py`)**:
+  - `orders` 테이블 조회 시 실전 환경(`kis_mode == 'REAL'`)에서는 `env == 'real'`만 엄격 격리하여 모의투자 `mock` DRY_RUN 주문 혼입을 원천 차단.
+  - 하드코딩된 초기자본(1,000만 원)을 실계좌 투입 자본(5,780,449원) 기준으로 정규화하여 현금 비중(52.75%) 및 자산 곡선 왜곡 완전 해소.
+
 ## [1.6.1] - 2026-11-01
 
 ### 수정 및 개선 (Fixed & Changed)

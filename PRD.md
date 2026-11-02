@@ -242,6 +242,19 @@ src/quant_ko/
 - **수동 동기화 UI (On-Demand Sync)**: `[🔄 KIS 실시간 잔고 동기화]` 버튼 클릭 시에만 1회 KIS API 호출.
 - **Streamlit 캐시 보호**: `@st.cache_data(ttl=3600)` 적용으로 중복 호출 및 불필요한 카카오톡 알림톡 차단.
 
+### 7.3 배포 환경(Streamlit Cloud) 데이터 연속성 및 시드 번들링 (Data Continuity & Bundled Seeds)
+
+- **배포 환경 데이터 단절 원천 차단:** Git에 포함되지 않는 로컬 SQLite DB(`data/quant_ko.db`) 및 캐시 피클 파일이 없는 Streamlit Cloud 컨테이너 환경에서도 대시보드의 모든 탭이 100% 정상 작동하도록 시드 데이터 번들링 도입.
+- **실전 체결 원장 시드 (`data/real_orders_seed.json`):** 10월 30일 체결 19종목을 포함한 실전 매매 내역을 경량 JSON 시드로 Git에 포함하여, 원격 컨테이너 및 신규 환경 기동 시 자동으로 SQLite `orders` 테이블에 초기 로드.
+- **최신 9대 팩터 타깃 시드 (`data/targets_latest.json`):** 최신 기준일(2026-10-08 / 10월말) 9대 팩터 상위 20종목 스냅샷을 번들링하여, DB가 없는 환경에서도 Tab 4 타깃 테이블 및 밸류/성장 산점도를 즉시 로드.
+- **실계좌 자산 추이 분리 (`env='real'`):** 자산 곡선 산출 시 `mock` DRY_RUN 주문 혼입을 엄격히 격리하고, 실계좌 자본금 기준으로 정규화하여 그래프 왜곡 해소.
+
+### 7.4 KIS 실시간 연동 진단 및 에러 가시화 (Diagnostic & Error Visibility)
+
+- **Streamlit Secrets 완전 평탄화:** `st.secrets`의 중첩 섹션 딕셔너리를 재귀적으로 탐색하여 `os.environ`에 `KIS_MODE`, `KIS_REAL_*` 환경변수 완전 주입.
+- **실시간 연동 실패 가시화:** KIS 잔고 조회 실패 시 에러를 침묵(Silent fallback)하지 않고, 상단 진단 경고 박스(오류 내용, 원인 및 조치 안내)를 명확히 노출하여 사용자가 상태를 즉시 파악할 수 있도록 보장.
+- **과거 리밸런싱 주문 조회 보강:** `client.fetch_orders()` 호출 시 당일뿐 아니라 최근 리밸런싱일(`20261030` 등) 주문까지 순회 동기화하여 누락 없는 실전 체결 내역 유지.
+
 ---
 
 ## 8. 설정 파일(`config.toml`) 및 통합 운영 스케줄러

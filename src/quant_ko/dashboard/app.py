@@ -42,10 +42,23 @@ from quant_ko.dashboard.data_loader import (  # noqa: E402
 try:
     import streamlit as st
 
-    # Streamlit Cloud 배포 환경: st.secrets에 등록된 KIS API 키 및 설정을 os.environ에 자동 동기화
+    # Streamlit Cloud 배포 환경: st.secrets의 중첩 섹션을 완전 평탄화하여 os.environ에 자동 동기화
+    def _flatten_secrets(d: Any, prefix: str = "") -> dict[str, str]:
+        items: dict[str, str] = {}
+        if hasattr(d, "items"):
+            for k, v in d.items():
+                sub_prefix = f"{prefix}_{k}".upper() if prefix else str(k).upper()
+                if hasattr(v, "items"):
+                    items.update(_flatten_secrets(v, sub_prefix))
+                else:
+                    items[str(k)] = str(v)
+                    items[sub_prefix] = str(v)
+        return items
+
     if hasattr(st, "secrets"):
         try:
-            for _k, _v in st.secrets.items():
+            flat_sec = _flatten_secrets(st.secrets)
+            for _k, _v in flat_sec.items():
                 if _k not in os.environ:
                     os.environ[_k] = str(_v)
         except Exception:
@@ -762,6 +775,13 @@ def _render_top_header_and_kpis(
             "</div>"
         )
         st.markdown(badge_html, unsafe_allow_html=True)
+
+        if acc_info.get("live_error"):
+            st.warning(
+                f"⚠️ **KIS Open API 실시간 잔고 연동 실패 안내** (오프라인 DB 체결 잔고로 표시 중)\n\n"
+                f"- **오류 내용**: `{acc_info['live_error']}`\n"
+                "- **원인 점검**: Streamlit Secrets(API Key/Secret/계좌번호) 설정 누락 또는 한국투자증권 포털의 **'해외 접속 허용'** 미체크 여부를 확인하세요."
+            )
 
     col1, col2, col3, col4 = st.columns(4)
     total_eq = float(acc_info.get("total_equity", 0.0))
