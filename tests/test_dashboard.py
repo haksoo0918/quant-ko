@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import pickle
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
@@ -343,8 +344,6 @@ def test_db_status_and_plotly_figures(sample_dashboard_db: Path) -> None:
     assert univ_cnt == 0
     assert top_df.empty
 
-
-from contextlib import contextmanager
 
 
 class _MockColumnOrTab:
