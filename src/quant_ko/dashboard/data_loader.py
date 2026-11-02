@@ -66,15 +66,25 @@ def _ensure_seed_orders_loaded(
 
     try:
         existing_real = store.get_orders(env="real")
-        if existing_real.empty:
-            with open(target_p, encoding="utf-8") as f:
-                seed_orders = json.load(f)
-            if isinstance(seed_orders, list):
-                for ord_data in seed_orders:
+        existing_tickers = (
+            set(existing_real["ticker"].astype(str).str.strip())
+            if not existing_real.empty
+            else set()
+        )
+        with open(target_p, encoding="utf-8") as f:
+            seed_orders = json.load(f)
+        if isinstance(seed_orders, list):
+            inserted_cnt = 0
+            for ord_data in seed_orders:
+                t = str(ord_data.get("ticker", "")).strip()
+                if t not in existing_tickers:
                     store.insert_order(ord_data)
+                    existing_tickers.add(t)
+                    inserted_cnt += 1
+            if inserted_cnt > 0:
                 logger.info(
-                    "실전 체결 원장 시드 %d건을 SQLite orders 테이블에 자동 적재했습니다.",
-                    len(seed_orders),
+                    "실전 주문 시드 신규 %d건을 SQLite orders 테이블에 동기화 적재했습니다.",
+                    inserted_cnt,
                 )
     except Exception as exc:
         logger.warning("실전 체결 원장 시드 자동 적재 실패: %s", exc)
