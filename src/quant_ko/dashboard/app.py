@@ -992,33 +992,36 @@ def _render_tab2_trade_logs(db_path: str) -> None:
     )
 
     total_cnt = len(filtered_df)
+    status_col = "체결상태" if "체결상태" in filtered_df.columns else ("상태" if "상태" in filtered_df.columns else None)
+    side_col = "매매구분" if "매매구분" in filtered_df.columns else ("side" if "side" in filtered_df.columns else None)
+
     buy_filled_cnt = (
         int(
             len(
                 filtered_df[
-                    (filtered_df["매매구분"] == "BUY")
-                    & (filtered_df["체결상태"].isin(["FILLED", "ORDERED", "PARTIAL"]))
+                    (filtered_df[side_col] == "BUY")
+                    & (filtered_df[status_col].isin(["FILLED", "ORDERED", "PARTIAL"]))
                 ]
             )
         )
-        if not filtered_df.empty
+        if not filtered_df.empty and status_col and side_col
         else 0
     )
     sell_filled_cnt = (
         int(
             len(
                 filtered_df[
-                    (filtered_df["매매구분"] == "SELL")
-                    & (filtered_df["체결상태"].isin(["FILLED", "ORDERED", "PARTIAL"]))
+                    (filtered_df[side_col] == "SELL")
+                    & (filtered_df[status_col].isin(["FILLED", "ORDERED", "PARTIAL"]))
                 ]
             )
         )
-        if not filtered_df.empty
+        if not filtered_df.empty and status_col and side_col
         else 0
     )
     failed_cnt = (
-        int(len(filtered_df[filtered_df["체결상태"] == "FAILED"]))
-        if not filtered_df.empty
+        int(len(filtered_df[filtered_df[status_col] == "FAILED"]))
+        if not filtered_df.empty and status_col
         else 0
     )
 
