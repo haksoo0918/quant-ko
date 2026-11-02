@@ -1143,6 +1143,19 @@ class LiveRebalancer:
                     status=new_status,
                     filled_qty=buy_qty if res_success else 0,
                 )
+                if res_success and not dry_run:
+                    self.store.insert_order(
+                        {
+                            "rebalance_date": norm_date,
+                            "ticker": ticker,
+                            "side": "BUY",
+                            "qty": buy_qty,
+                            "price": buy_order_price,
+                            "status": "FILLED",
+                            "filled_qty": buy_qty,
+                            "env": self.env,
+                        }
+                    )
 
                 summary: ExecutedOrderSummary = {
                     "id": order_id,

@@ -66,8 +66,15 @@ def _ensure_seed_orders_loaded(
 
     try:
         existing_real = store.get_orders(env="real")
-        existing_tickers = (
-            set(existing_real["ticker"].astype(str).str.strip())
+        existing_keys = (
+            set(
+                zip(
+                    existing_real["ticker"].astype(str).str.strip(),
+                    existing_real["rebalance_date"].astype(str).str.strip(),
+                    existing_real["side"].astype(str).str.strip().str.upper(),
+                    strict=False,
+                )
+            )
             if not existing_real.empty
             else set()
         )
@@ -78,12 +85,15 @@ def _ensure_seed_orders_loaded(
             comp_records = []
             for ord_data in seed_orders:
                 t = str(ord_data.get("ticker", "")).strip()
+                d = str(ord_data.get("rebalance_date", "")).strip()
+                s = str(ord_data.get("side", "")).strip().upper()
                 n = str(ord_data.get("name", "")).strip()
                 if t and n:
                     comp_records.append({"ticker": t, "name": n})
-                if t not in existing_tickers:
+                key = (t, d, s)
+                if key not in existing_keys:
                     store.insert_order(ord_data)
-                    existing_tickers.add(t)
+                    existing_keys.add(key)
                     inserted_cnt += 1
             if inserted_cnt > 0:
                 logger.info(
@@ -333,17 +343,16 @@ def load_account_and_positions(
                                         er_ticker = str(er.get("ticker", "")).strip()
                                         er_side = str(er.get("side", "")).strip().upper()
                                         er_date = normalize_date(str(er.get("rebalance_date", "")))
-                                        if er_ticker == b_ticker and er_side == b_side:
-                                            if er_date == b_date or int(er.get("qty") or 0) == b_qty:
-                                                is_present = True
-                                                er_st = str(er.get("status", "")).strip().upper()
-                                                if er_st != "FILLED":
-                                                    store.update_order_status(
-                                                        int(er["id"]),
-                                                        status="FILLED",
-                                                        filled_qty=b_filled if b_filled > 0 else b_qty,
-                                                    )
-                                                break
+                                        if er_ticker == b_ticker and er_side == b_side and er_date == b_date:
+                                            is_present = True
+                                            er_st = str(er.get("status", "")).strip().upper()
+                                            if er_st != "FILLED":
+                                                store.update_order_status(
+                                                    int(er["id"]),
+                                                    status="FILLED",
+                                                    filled_qty=b_filled if b_filled > 0 else b_qty,
+                                                )
+                                            break
 
                                 if not is_present:
                                     store.insert_order(

@@ -215,9 +215,20 @@
     "side": "BUY",
     "qty": 74,
     "price": 1924.0,
-    "status": "PENDING_CATCHUP",
+    "status": "RESOLVED",
     "filled_qty": 0,
     "env": "real",
     "name": "DH오토리드"
+  },
+  {
+    "rebalance_date": "2026-11-02",
+    "ticker": "290120",
+    "name": "DH오토리드",
+    "side": "BUY",
+    "qty": 74,
+    "price": 1924.0,
+    "status": "FILLED",
+    "filled_qty": 74,
+    "env": "real"
   }
 ]

@@ -3,6 +3,7 @@
 import json
 import logging
 import os
+import tempfile
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -10,6 +11,8 @@ from typing import Any
 
 import requests
 from dotenv import load_dotenv
+
+from quant_ko.data.krx import normalize_date
 
 load_dotenv()
 
@@ -104,6 +107,9 @@ class OrderResult:
 class KisClient:
     """한국투자증권 REST API 통신 클라이언트 (모의투자 및 실전투자 자동 전환 및 토큰 캐싱)."""
 
+    # 프로세스 전체 공유 토큰 캐시 (동일 파이썬 프로세스 내 모든 인스턴스/스레드에서 토큰 재사용)
+    _shared_token_cache: dict[str, tuple[str, float]] = {}
+
     def __init__(
         self,
         app_key: str | None = None,
@@ -171,10 +177,20 @@ class KisClient:
             유효한 OAuth 접근 토큰 문자열.
         """
         now = time.time()
+        mode_str = "mock" if self.is_mock else "real"
+        cache_key = f"{mode_str}_{self.app_key}_{os.path.abspath(self.token_cache_file)}"
+        default_file = f"data/kis_token_{mode_str}.json"
+        is_default_file = os.path.abspath(self.token_cache_file) == os.path.abspath(default_file)
+        temp_cache = (
+            os.path.join(tempfile.gettempdir(), f"kis_token_{mode_str}.json")
+            if is_default_file
+            else None
+        )
 
         if force_refresh:
             self._access_token = None
             self._token_expires_at = 0.0
+            KisClient._shared_token_cache.pop(cache_key, None)
             if os.path.exists(self.token_cache_file):
                 try:
                     os.remove(self.token_cache_file)
@@ -182,9 +198,14 @@ class KisClient:
                     logger.warning(
                         "Failed to remove KIS token cache file %s: %s", self.token_cache_file, exc
                     )
+            if temp_cache and os.path.exists(temp_cache):
+                try:
+                    os.remove(temp_cache)
+                except Exception:
+                    pass
 
-        # 1. 인메모리 캐시 유효성 확인
-        if self._access_token and now < self._token_expires_at - 60:
+        # 1. 인스턴스 인메모리 캐시 유효성 확인
+        if not force_refresh and self._access_token and now < self._token_expires_at - 60:
             remaining_h = (self._token_expires_at - now) / 3600.0
             logger.info(
                 "Reusing cached KIS OAuth token from %s (valid for another %.1f hours)",
@@ -193,29 +214,51 @@ class KisClient:
             )
             return self._access_token
 
-        # 2. 파일 캐시 확인 (KIS 토큰 유효기간 24시간, 분당 1회 발급 제한 준수)
-        if not force_refresh and os.path.exists(self.token_cache_file):
-            try:
-                with open(self.token_cache_file, encoding="utf-8") as f:
-                    cache_data = json.load(f)
-                cached_token = cache_data.get("access_token")
-                cached_expires = float(cache_data.get("expires_at", 0))
-                if cached_token and now < cached_expires - 60:
-                    self._access_token = cached_token
-                    self._token_expires_at = cached_expires
-                    remaining_h = (cached_expires - now) / 3600.0
-                    logger.info(
-                        "Reusing cached KIS OAuth token from %s (valid for another %.1f hours)",
-                        self.token_cache_file,
-                        remaining_h,
-                    )
-                    return self._access_token
-            except Exception as exc:
-                logger.warning(
-                    "Failed to read KIS token cache file %s: %s", self.token_cache_file, exc
-                )
+        # 2. 파일 캐시 확인 (data/ 폴더 및 기본 경로 시 OS 임시 디렉터리 다중 경로 확인)
+        candidate_files = [self.token_cache_file]
+        if temp_cache and temp_cache != self.token_cache_file:
+            candidate_files.append(temp_cache)
 
-        # 3. KIS API 서버에 신규 토큰 발급 요청
+        if not force_refresh:
+            for c_file in candidate_files:
+                if os.path.exists(c_file):
+                    try:
+                        with open(c_file, encoding="utf-8") as f:
+                            cache_data = json.load(f)
+                        cached_token = cache_data.get("access_token")
+                        cached_expires = float(cache_data.get("expires_at", 0))
+                        if cached_token and now < cached_expires - 60:
+                            self._access_token = cached_token
+                            self._token_expires_at = cached_expires
+                            KisClient._shared_token_cache[cache_key] = (cached_token, cached_expires)
+                            remaining_h = (cached_expires - now) / 3600.0
+                            logger.info(
+                                "Reusing cached KIS OAuth token from %s (valid for another %.1f hours)",
+                                c_file,
+                                remaining_h,
+                            )
+                            return self._access_token
+                    except Exception as exc:
+                        if c_file == self.token_cache_file:
+                            logger.warning(
+                                "Failed to read KIS token cache file %s: %s", self.token_cache_file, exc
+                            )
+
+        # 3. 프로세스 클래스 레벨 공유 메모리 캐시 확인 (대시보드 세션 재시작/새로고침 시 파일 부재 대비)
+        if not force_refresh and cache_key in KisClient._shared_token_cache:
+            tok, exp = KisClient._shared_token_cache[cache_key]
+            if now < exp - 60:
+                self._access_token = tok
+                self._token_expires_at = exp
+                remaining_h = (exp - now) / 3600.0
+                logger.info(
+                    "Reusing cached KIS OAuth token from %s (valid for another %.1f hours)",
+                    "memory",
+                    remaining_h,
+                )
+                return tok
+
+        # 4. KIS API 서버에 신규 토큰 발급 요청
         logger.info(
             "Requesting new KIS OAuth token from API (force_refresh=%s, cache_file=%s)...",
             force_refresh,
@@ -234,36 +277,44 @@ class KisClient:
         self._access_token = data["access_token"]
         expires_in = float(data.get("expires_in", 86400))
         self._token_expires_at = now + expires_in
+        KisClient._shared_token_cache[cache_key] = (self._access_token, self._token_expires_at)
 
         # 안전한 권한으로 파일에 원자적(atomic) 기록
-        tmp_file = f"{self.token_cache_file}.tmp"
-        try:
-            token_dir = os.path.dirname(self.token_cache_file)
-            if token_dir:
-                os.makedirs(token_dir, exist_ok=True)
-            with open(tmp_file, "w", encoding="utf-8") as f:
-                json.dump(
-                    {"access_token": self._access_token, "expires_at": self._token_expires_at},
-                    f,
-                )
-            if os.name != "nt":
-                try:
-                    os.chmod(tmp_file, 0o600)
-                except Exception:
-                    pass
-            os.replace(tmp_file, self.token_cache_file)
-        except Exception as exc:
-            logger.error(
-                "Failed to write KIS token cache file %s: %s", self.token_cache_file, exc
-            )
-            if os.path.exists(tmp_file):
-                try:
-                    os.remove(tmp_file)
-                except Exception:
-                    pass
+        targets = [self.token_cache_file]
+        if temp_cache and temp_cache != self.token_cache_file:
+            targets.append(temp_cache)
+
+        for target_p in targets:
+            tmp_file = f"{target_p}.tmp"
+            try:
+                target_dir = os.path.dirname(target_p)
+                if target_dir:
+                    os.makedirs(target_dir, exist_ok=True)
+                with open(tmp_file, "w", encoding="utf-8") as f:
+                    json.dump(
+                        {"access_token": self._access_token, "expires_at": self._token_expires_at},
+                        f,
+                    )
+                if os.name != "nt":
+                    try:
+                        os.chmod(tmp_file, 0o600)
+                    except Exception:
+                        pass
+                os.replace(tmp_file, target_p)
+            except Exception as exc:
+                if target_p == self.token_cache_file:
+                    logger.error(
+                        "Failed to write KIS token cache file %s: %s", self.token_cache_file, exc
+                    )
+                else:
+                    logger.warning("Failed to write KIS token backup file %s: %s", target_p, exc)
+                if os.path.exists(tmp_file):
+                    try:
+                        os.remove(tmp_file)
+                    except Exception:
+                        pass
 
         return self._access_token
-
     def _is_token_expired(self, resp: requests.Response) -> bool:
         """API 응답이 토큰 만료 또는 유효하지 않은 토큰 에러인지 확인합니다."""
         if resp.status_code == 401:
@@ -586,6 +637,8 @@ class KisClient:
             else:
                 status = "UNFILLED"
 
+            ord_dt = str(item.get("ord_dt") or "").strip() or target_date
+            norm_ord_dt = normalize_date(ord_dt)
             orders.append(
                 {
                     "order_no": item.get("odno", ""),
@@ -596,60 +649,8 @@ class KisClient:
                     "order_price": float(item.get("ord_unpr", 0.0)),
                     "status": status,
                     "raw_status": stat_name,
-                }
-            )
-
-        return orders
-        url = f"{self.base_url}/uapi/domestic-stock/v1/trading/inquire-daily-ccld"
-        tr_id = "VTTC8001R" if self.is_mock else "TTTC8001R"
-        headers = self._get_headers(tr_id=tr_id)
-
-        target_date = (date or time.strftime("%Y%m%d")).replace("-", "")
-        params = {
-            "CANO": self.account_prefix,
-            "ACNT_PRDT_CD": self.account_suffix,
-            "INQR_STRT_DT": target_date,
-            "INQR_END_DT": target_date,
-            "SLL_BUY_DVSN_CD": "00",
-            "INQR_DVSN": "00",
-            "PDNO": "",
-            "CCLD_DVSN": "00",
-            "ORD_GNO_BRNO": "",
-            "ODNO": "",
-            "INQR_DVSN_3": "00",
-            "INQR_DVSN_1": "",
-            "CTX_AREA_FK100": "",
-            "CTX_AREA_NK100": "",
-        }
-        resp = self._request("GET", url, headers=headers, params=params)
-        resp.raise_for_status()
-        data = resp.json()
-
-        orders: list[dict[str, Any]] = []
-        for item in data.get("output1", []):
-            ord_qty = int(item.get("ord_qty", 0))
-            filled_qty = int(item.get("tot_ccld_qty", 0))
-            stat_name = item.get("prcs_stat_name", "")
-
-            if filled_qty == ord_qty and ord_qty > 0:
-                status = "FILLED"
-            elif filled_qty > 0:
-                status = "PARTIAL"
-            elif "취소" in stat_name:
-                status = "CANCELLED"
-            else:
-                status = "UNFILLED"
-
-            orders.append(
-                {
-                    "order_no": item.get("odno", ""),
-                    "ticker": item.get("pdno", ""),
-                    "side": "BUY" if item.get("sll_buy_dvsn_cd") in ("02", "BUY") else "SELL",
-                    "order_qty": ord_qty,
-                    "filled_qty": filled_qty,
-                    "order_price": float(item.get("ord_unpr", 0.0)),
-                    "status": status,
-                    "raw_status": stat_name,
+                    "rebalance_date": norm_ord_dt,
+                    "date": norm_ord_dt,
                 }
             )
 

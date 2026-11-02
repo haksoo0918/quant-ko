@@ -1053,31 +1053,32 @@ def test_actual_trade_logs_deduplication_and_name_fallback(tmp_path: Path) -> No
     store = DataStore(db_path)
     store.initialize_schema()
 
-    # 1. 거래기록 조회 (시드 20건 자동 로드 및 중복 방어)
+    # 1. 거래기록 조회 (10/30 20건 + 11/02 캐치업 체결 1건 = 총 21건 자동 로드)
     df = load_actual_trade_logs(db_path=db_path)
-    assert len(df) == 20
+    assert len(df) == 21
     assert df["종목코드"].nunique() == 20
 
-    # 2. 290120 DH오토리드 정상 표기 검증
-    dh_row = df[df["종목코드"] == "290120"]
-    assert len(dh_row) == 1
-    assert dh_row.iloc[0]["종목명"] == "DH오토리드"
-    assert dh_row.iloc[0]["체결상태"] == "PENDING_CATCHUP"
+    # 2. 11/02 DH오토리드 당일 체결 내역 및 한글 종목명 정상 표기 검증
+    dh_today = df[(df["종목코드"] == "290120") & (df["주문일시"] == "2026-11-02")]
+    assert len(dh_today) == 1
+    assert dh_today.iloc[0]["종목명"] == "DH오토리드"
+    assert dh_today.iloc[0]["체결상태"] == "FILLED"
+    assert dh_today.iloc[0]["체결수량"] == 74
 
     # 3. 모든 종목의 종목명이 종목코드가 아닌 실제 종목명으로 매핑되었는지 검증
     assert (df["종목코드"] == df["종목명"]).sum() == 0
 
     # 4. 중복 INSERT 시도 시에도 중복 레코드가 생기지 않는지 검증
     store.insert_order({
-        "rebalance_date": "2026-10-30",
+        "rebalance_date": "2026-11-02",
         "ticker": "290120",
         "side": "BUY",
         "qty": 74,
         "price": 1924.0,
-        "status": "PENDING_CATCHUP",
-        "filled_qty": 0,
+        "status": "FILLED",
+        "filled_qty": 74,
         "env": "real",
     })
     df_after = load_actual_trade_logs(db_path=db_path)
-    assert len(df_after) == 20
+    assert len(df_after) == 21
 
