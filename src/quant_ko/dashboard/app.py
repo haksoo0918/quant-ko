@@ -1033,7 +1033,22 @@ def _render_tab2_trade_logs(db_path: str) -> None:
     if filtered_df.empty:
         st.warning("선택한 조건에 해당하는 실전 거래기록이 없습니다.")
     else:
-        st.dataframe(filtered_df, use_container_width=True, hide_index=True)
+        # 금액 및 수량 천 단위 쉼표(,) 및 단위 포맷팅 적용
+        display_orders = filtered_df.copy()
+        if not display_orders.empty:
+            if "주문단가" in display_orders.columns:
+                display_orders["주문단가"] = display_orders["주문단가"].map(
+                    lambda x: f"{int(x):,}원" if pd.notnull(x) else "-"
+                )
+            if "주문수량" in display_orders.columns:
+                display_orders["주문수량"] = display_orders["주문수량"].map(
+                    lambda x: f"{int(x):,}주" if pd.notnull(x) else "-"
+                )
+            if "체결수량" in display_orders.columns:
+                display_orders["체결수량"] = display_orders["체결수량"].map(
+                    lambda x: f"{int(x):,}주" if pd.notnull(x) else "-"
+                )
+        st.dataframe(display_orders, use_container_width=True, hide_index=True)
         csv_bytes = filtered_df.to_csv(index=False).encode("utf-8-sig")
         st.download_button(
             label="📥 조회된 거래기록 CSV 다운로드",
