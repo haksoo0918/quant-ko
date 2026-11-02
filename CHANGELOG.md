@@ -5,6 +5,18 @@
 
 ---
 
+## [1.6.4] - 2026-11-02
+
+### 추가 및 변경 (Added & Changed)
+- **주문 원장 중복 적재 방지 및 안전 Upsert (`src/quant_ko/data/store.py`, `src/quant_ko/dashboard/data_loader.py`, `src/quant_ko/live/rebalancer.py`)**:
+  - `orders` 테이블에 동일 주문(일자, 종목, 구분, 환경, 상태) 중복 삽입 시 기존 레코드를 안전하게 갱신(Upsert)하도록 보강.
+  - 배포 환경 기동 시 완전 중복 레코드 자동 정리 및 `catchup_unfilled_orders` 실행 시 종목별 1회 주문만 보장하도록 방어 로직 적용.
+- **배포 환경 한글 기업명 폴백 매핑 보강 (`data/real_orders_seed.json`, `src/quant_ko/dashboard/data_loader.py`)**:
+  - `real_orders_seed.json`의 `290120` 항목에 누락되었던 `"name": "DH오토리드"` 필드를 복원.
+  - `companies` 테이블이 비어 있는 배포 환경에서도 시드 및 타깃 JSON에서 한글 종목명을 안전하게 폴백 매핑하여 종목코드 대신 실제 기업명이 정상 표출되도록 개선.
+- **대시보드 거래기록 금액 및 수량 가독성 개선 (`src/quant_ko/dashboard/app.py`)**:
+  - Tab 2 실제 거래기록 테이블의 `주문단가`(`1,924원`), `주문수량`(`74주`), `체결수량`(`0주`)에 천 단위 쉼표(`,`) 및 단위명을 적용하여 가독성 강화.
+
 ## [1.6.3] - 2026-11-02
 
 ### 추가 및 변경 (Added & Changed)
