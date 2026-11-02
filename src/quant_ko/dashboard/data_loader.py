@@ -528,6 +528,7 @@ def load_account_and_positions(
 def build_account_equity_curve(
     db_path: str | Path = "data/quant_ko.db",
     initial_capital: float = 10_000_000.0,
+    acc_info: dict[str, Any] | None = None,
 ) -> pd.DataFrame:
     """실제 계좌의 일별 전체 자산 변화 추이(예수금, 주식평가액, 총자산, 수익률)를 계산합니다.
 
@@ -549,8 +550,11 @@ def build_account_equity_curve(
     kis_mode = os.getenv("KIS_MODE", "REAL").strip().upper()
     is_mock = kis_mode != "REAL"
     env_cap = os.getenv("INITIAL_CAPITAL")
-    if not is_mock and not env_cap and initial_capital == 10_000_000.0 and db_name == "quant_ko.db":
-        initial_capital = 5_780_449.0
+    if acc_info and float(acc_info.get("total_equity") or 0.0) > 0:
+        actual_total = float(acc_info["total_equity"])
+        initial_capital = actual_total
+    elif not is_mock and not env_cap and initial_capital == 10_000_000.0 and db_name == "quant_ko.db":
+        initial_capital = 3_057_900.0
 
     try:
         if db_name == "quant_ko.db" and not is_mock:
@@ -694,6 +698,14 @@ def build_account_equity_curve(
                 "return_pct": round(ret_pct, 2),
             }
         )
+
+    # acc_info가 제공된 경우 상단 카드 수치와 1원 단위까지 완전 일치 보장
+    if acc_info and records and float(acc_info.get("total_equity") or 0.0) > 0:
+        last_rec = records[-1]
+        last_rec["cash"] = round(float(acc_info.get("cash", last_rec["cash"])), 2)
+        last_rec["stock_value"] = round(float(acc_info.get("stock_value", last_rec["stock_value"])), 2)
+        last_rec["total_equity"] = round(float(acc_info.get("total_equity", last_rec["total_equity"])), 2)
+        last_rec["return_pct"] = round(float(acc_info.get("return_pct", 0.0)), 2)
 
     return pd.DataFrame(records, columns=columns)
 

@@ -832,7 +832,7 @@ def _render_tab1_equity_and_portfolio(
 ) -> None:
     """Tab 1: 전체 자산 변화 추이, 보유 포트폴리오, 10.5개년 단독 전략 시계열 및 벤치마크 비교."""
     st.subheader("1️⃣ 실제 계좌 전체 자산 변화 추이 (Total Equity Trajectory)")
-    equity_df = build_account_equity_curve(db_path=db_path)
+    equity_df = build_account_equity_curve(db_path=db_path, acc_info=acc_info)
     fig_eq = create_equity_curve_figure(equity_df)
     st.plotly_chart(fig_eq, use_container_width=True)
 

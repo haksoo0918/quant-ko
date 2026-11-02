@@ -207,5 +207,16 @@
     "status": "FILLED",
     "filled_qty": 65,
     "env": "real"
+  },
+  {
+    "id": 46,
+    "rebalance_date": "2026-10-30",
+    "ticker": "290120",
+    "side": "BUY",
+    "qty": 74,
+    "price": 1924.0,
+    "status": "PENDING_CATCHUP",
+    "filled_qty": 0,
+    "env": "real"
   }
 ]
