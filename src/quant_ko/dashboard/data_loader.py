@@ -75,8 +75,12 @@ def _ensure_seed_orders_loaded(
             seed_orders = json.load(f)
         if isinstance(seed_orders, list):
             inserted_cnt = 0
+            comp_records = []
             for ord_data in seed_orders:
                 t = str(ord_data.get("ticker", "")).strip()
+                n = str(ord_data.get("name", "")).strip()
+                if t and n:
+                    comp_records.append({"ticker": t, "name": n})
                 if t not in existing_tickers:
                     store.insert_order(ord_data)
                     existing_tickers.add(t)
@@ -86,6 +90,13 @@ def _ensure_seed_orders_loaded(
                     "실전 주문 시드 신규 %d건을 SQLite orders 테이블에 동기화 적재했습니다.",
                     inserted_cnt,
                 )
+            if comp_records:
+                try:
+                    c_df = store.get_companies()
+                    if c_df.empty or len(c_df) < len(comp_records):
+                        store.upsert_companies(comp_records)
+                except Exception as comp_exc:
+                    logger.warning("시드 기반 기업 마스터 보강 실패: %s", comp_exc)
     except Exception as exc:
         logger.warning("실전 체결 원장 시드 자동 적재 실패: %s", exc)
     return
@@ -129,7 +140,11 @@ def mask_account_no(cano: str, prdt_cd: str = "01") -> str:
 
 
 def _load_company_name_map(store: DataStore) -> dict[str, str]:
-    """SQLite companies 테이블에서 종목코드-종목명 매핑 딕셔너리를 생성합니다."""
+    """SQLite companies 테이블에서 종목코드-종목명 매핑 딕셔너리를 생성합니다.
+
+    배포 환경(Streamlit Cloud)처럼 companies 테이블이 비어있는 경우
+    시드 JSON 파일(real_orders_seed.json, targets_latest.json)에서 종목명을 안전하게 폴백 보강합니다.
+    """
     name_map: dict[str, str] = {CD_ETF_TICKER: CD_ETF_NAME}
     try:
         comp_df = store.get_companies()
@@ -141,6 +156,28 @@ def _load_company_name_map(store: DataStore) -> dict[str, str]:
                     name_map[t] = n
     except Exception as exc:
         logger.warning("종목명 매핑 로드 실패: %s", exc)
+
+    # 폴백: 시드 파일 및 최신 타깃 스냅샷에서 누락된 한글 종목명 추가 보강
+    json_candidates = [
+        Path("data/real_orders_seed.json"),
+        Path(__file__).resolve().parent.parent.parent.parent / "data" / "real_orders_seed.json",
+        Path("data/targets_latest.json"),
+        Path(__file__).resolve().parent.parent.parent.parent / "data" / "targets_latest.json",
+    ]
+    for jc in json_candidates:
+        if jc.exists():
+            try:
+                with open(jc, encoding="utf-8") as f:
+                    data = json.load(f)
+                items = data if isinstance(data, list) else data.get("top20", [])
+                for item in items:
+                    t = str(item.get("ticker", "")).strip()
+                    n = str(item.get("name", "")).strip()
+                    if t and n and t not in name_map:
+                        name_map[t] = n
+            except Exception:
+                pass
+
     return name_map
 
 
@@ -752,6 +789,7 @@ def load_actual_trade_logs(
         "체결상태",
     ]
     store = DataStore(db_path)
+    _ensure_seed_orders_loaded(store)
     try:
         orders_df = store.get_orders()
     except Exception:
@@ -787,6 +825,8 @@ def load_actual_trade_logs(
     if df.empty:
         return pd.DataFrame(columns=display_cols)
 
+    # 중복 주문 레코드 방어 (동일 rebalance_date, ticker, side, env 기준 최신 1건만 유지)
+    df = df.drop_duplicates(subset=["rebalance_date", "ticker", "side_norm", "env_norm", "status_norm", "qty"], keep="last")
     name_map = _load_company_name_map(store)
     df = df.sort_values("id", ascending=False).reset_index(drop=True)
 

@@ -1047,3 +1047,38 @@ def test_render_tab2_dynamic_metric_update(
     assert metrics_dict2["매수 체결/주문"] == "0건"
     assert metrics_dict2["매도 체결/주문"] == "1건"
     assert metrics_dict2["실패/거부"] == "0건"
+
+def test_actual_trade_logs_deduplication_and_name_fallback(tmp_path: Path) -> None:
+    """배포 환경 빈 DB에서 시드 로드 시 중복 방지 및 기업명 폴백 매핑이 정상 동작하는지 검증합니다."""
+    db_path = tmp_path / "quant_ko.db"
+    store = DataStore(db_path)
+    store.initialize_schema()
+
+    # 1. 거래기록 조회 (시드 20건 자동 로드 및 중복 방어)
+    df = load_actual_trade_logs(db_path=db_path)
+    assert len(df) == 20
+    assert df["종목코드"].nunique() == 20
+
+    # 2. 290120 DH오토리드 정상 표기 검증
+    dh_row = df[df["종목코드"] == "290120"]
+    assert len(dh_row) == 1
+    assert dh_row.iloc[0]["종목명"] == "DH오토리드"
+    assert dh_row.iloc[0]["체결상태"] == "PENDING_CATCHUP"
+
+    # 3. 모든 종목의 종목명이 종목코드가 아닌 실제 종목명으로 매핑되었는지 검증
+    assert (df["종목코드"] == df["종목명"]).sum() == 0
+
+    # 4. 중복 INSERT 시도 시에도 중복 레코드가 생기지 않는지 검증
+    store.insert_order({
+        "rebalance_date": "2026-10-30",
+        "ticker": "290120",
+        "side": "BUY",
+        "qty": 74,
+        "price": 1924.0,
+        "status": "PENDING_CATCHUP",
+        "filled_qty": 0,
+        "env": "real",
+    })
+    df_after = load_actual_trade_logs(db_path=db_path)
+    assert len(df_after) == 20
+

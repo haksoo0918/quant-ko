@@ -898,6 +898,9 @@ class LiveRebalancer:
             logger.info(msg)
             return {"success": True, "count": 0, "orders": [], "message": msg}
 
+        # 중복 주문 방어 (동일 일자, 종목, 매매구분 기준 1건만 유지)
+        orders_df = orders_df.drop_duplicates(subset=["rebalance_date", "ticker", "side"], keep="last")
+
         # 3. 대상 주문이 있으므로 실계좌 잔고 조회
         try:
             balance = self.kis_client.fetch_balance()

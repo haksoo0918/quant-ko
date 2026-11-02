@@ -122,6 +122,17 @@ class DataStore:
         """데이터베이스 테이블 및 인덱스가 존재하지 않는 경우 초기화 생성합니다."""
         with self.get_connection() as conn:
             conn.executescript(SCHEMA_SQL)
+            # 동일 주문(일자, 종목, 구분, 환경, 상태, 수량)의 비정상 완전 중복 레코드 정리
+            try:
+                conn.execute("""
+                    DELETE FROM orders
+                    WHERE id NOT IN (
+                        SELECT MIN(id) FROM orders
+                        GROUP BY rebalance_date, ticker, side, env, status, qty
+                    )
+                """)
+            except Exception:
+                pass
             conn.commit()
 
     def upsert_companies(self, records: list[dict[str, Any]] | pd.DataFrame) -> None:
@@ -362,19 +373,48 @@ class DataStore:
 
     def insert_order(self, order: dict[str, Any]) -> int:
         """리밸런싱 매매 주문 기록을 등록하고 생성된 주문 ID를 반환합니다."""
-        sql = """
-        INSERT INTO orders (
-            rebalance_date, ticker, side, qty, price, status, filled_qty, env
-        ) VALUES (
-            :rebalance_date, :ticker, :side, :qty, :price, :status,
-            COALESCE(:filled_qty, 0), :env
-        )
-        """
         record = dict(order)
         record.setdefault("filled_qty", 0)
 
+        # 동일 (rebalance_date, ticker, side, env, status) 완전 중복 주문 존재 시 기존 ID 재사용
         with self.get_connection() as conn:
             cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT id FROM orders
+                WHERE rebalance_date = :rebalance_date
+                  AND ticker = :ticker
+                  AND side = :side
+                  AND env = :env
+                  AND status = :status
+                LIMIT 1
+                """,
+                record,
+            )
+            existing = cursor.fetchone()
+            if existing:
+                order_id = existing[0]
+                record_update = dict(record)
+                record_update["id"] = order_id
+                cursor.execute(
+                    """
+                    UPDATE orders
+                    SET qty = :qty, price = :price, filled_qty = COALESCE(:filled_qty, 0)
+                    WHERE id = :id
+                    """,
+                    record_update,
+                )
+                conn.commit()
+                return order_id
+
+            sql = """
+            INSERT INTO orders (
+                rebalance_date, ticker, side, qty, price, status, filled_qty, env
+            ) VALUES (
+                :rebalance_date, :ticker, :side, :qty, :price, :status,
+                COALESCE(:filled_qty, 0), :env
+            )
+            """
             cursor.execute(sql, record)
             conn.commit()
             return cursor.lastrowid or 0

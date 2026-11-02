@@ -246,7 +246,8 @@ src/quant_ko/
 ### 7.3 배포 환경(Streamlit Cloud) 데이터 연속성 및 시드 번들링 (Data Continuity & Bundled Seeds)
 
 - **배포 환경 데이터 단절 원천 차단:** Git에 포함되지 않는 로컬 SQLite DB(`data/quant_ko.db`) 및 캐시 피클 파일이 없는 Streamlit Cloud 컨테이너 환경에서도 대시보드의 모든 탭이 100% 정상 작동하도록 시드 데이터 번들링 도입.
-- **실전 체결 원장 시드 (`data/real_orders_seed.json`):** 10월 30일 체결 19종목을 포함한 실전 매매 내역을 경량 JSON 시드로 Git에 포함하여, 원격 컨테이너 및 신규 환경 기동 시 자동으로 SQLite `orders` 테이블에 초기 로드.
+- **실전 체결 원장 시드 (`data/real_orders_seed.json`):** 10월 30일 체결 19종목 및 미체결 1종목(`290120` DH오토리드 PENDING_CATCHUP)을 포함한 실전 매매 내역을 경량 JSON 시드로 Git에 포함하여, 원격 컨테이너 및 신규 환경 기동 시 자동으로 SQLite `orders` 테이블에 초기 로드.
+- **주문 원장 중복 방지 및 기업명 폴백 보장:** SQLite `orders` 테이블에 `(rebalance_date, ticker, side, env)` 고유 인덱스 및 Upsert를 적용하여 중복 발주/적재를 차단하고, 배포 환경에서 `companies` 테이블이 비어 있더라도 시드 및 타깃 JSON에서 한글 종목명을 안전하게 폴백 매핑.
 - **최신 9대 팩터 타깃 시드 (`data/targets_latest.json`):** 최신 기준일(2026-10-08 / 10월말) 9대 팩터 상위 20종목 스냅샷을 번들링하여, DB가 없는 환경에서도 Tab 4 타깃 테이블 및 밸류/성장 산점도를 즉시 로드.
 - **실계좌 자산 추이 분리 (`env='real'`):** 자산 곡선 산출 시 `mock` DRY_RUN 주문 혼입을 엄격히 격리하고, 실계좌 자본금 기준으로 정규화하여 그래프 왜곡 해소.
 

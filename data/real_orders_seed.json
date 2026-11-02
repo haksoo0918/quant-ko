@@ -217,6 +217,7 @@
     "price": 1924.0,
     "status": "PENDING_CATCHUP",
     "filled_qty": 0,
-    "env": "real"
+    "env": "real",
+    "name": "DH오토리드"
   }
 ]
