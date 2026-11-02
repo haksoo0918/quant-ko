@@ -1048,8 +1048,35 @@ def diagnose_held_positions_risk(
         logger.warning("관리종목 조회 중 예외 (정상 간주): %s", exc)
 
     # 2. 최신 재무제표(부채비율 및 자본잠식률) 조회
-    # 2-1. monthly_targets_cache.pkl 캐시 우선 조회 (사전 계산된 debt_ratio 및 impairment_ratio)
     fin_map: dict[str, dict[str, float]] = {}
+
+    # 2-0. targets_latest.json 시드 우선 조회 (Streamlit Cloud 배포 환경 재무 데이터 복원)
+    json_candidates = [
+        Path("data/targets_latest.json"),
+        Path(__file__).resolve().parent.parent.parent.parent / "data" / "targets_latest.json",
+        Path.cwd() / "data" / "targets_latest.json",
+    ]
+    for j_path in json_candidates:
+        if j_path.exists():
+            try:
+                with open(j_path, encoding="utf-8") as f:
+                    j_data = json.load(f)
+                if isinstance(j_data, dict) and "top20" in j_data:
+                    for r in j_data["top20"]:
+                        t = str(r.get("ticker", "")).strip()
+                        if t in tickers and t not in fin_map:
+                            dr = (
+                                float(r.get("부채비율(%)") or r.get("debt_ratio") or 0.0)
+                                if ("부채비율(%)" in r or "debt_ratio" in r)
+                                else 0.0
+                            )
+                            raw_imp = float(r.get("impairment_ratio") or 0.0)
+                            imp = max(0.0, raw_imp)
+                            fin_map[t] = {"debt_ratio": dr, "impairment_ratio": imp}
+            except Exception as exc:
+                logger.warning("타깃 시드 JSON 재무 위험 조회 실패: %s", exc)
+
+    # 2-1. monthly_targets_cache.pkl 캐시 조회 (사전 계산된 debt_ratio 및 impairment_ratio)
     p = Path(cache_path)
     cache_candidates = [p]
     default_p = Path("data/monthly_targets_cache.pkl")
