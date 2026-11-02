@@ -58,6 +58,8 @@ htmlcov/
 *.sqlite3
 data/*.pkl
 data/*.json
+!data/real_orders_seed.json
+!data/targets_latest.json
 data/*.csv
 data/*.parquet
 !data/backtest_10y_series.parquet

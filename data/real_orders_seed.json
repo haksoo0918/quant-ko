@@ -1,0 +1,211 @@
+[
+  {
+    "rebalance_date": "2026-10-30",
+    "ticker": "002880",
+    "name": "디와이에이",
+    "side": "BUY",
+    "qty": 45,
+    "price": 3175.0,
+    "status": "FILLED",
+    "filled_qty": 45,
+    "env": "real"
+  },
+  {
+    "rebalance_date": "2026-10-30",
+    "ticker": "017000",
+    "name": "신원종합개발",
+    "side": "BUY",
+    "qty": 68,
+    "price": 2090.0,
+    "status": "FILLED",
+    "filled_qty": 68,
+    "env": "real"
+  },
+  {
+    "rebalance_date": "2026-10-30",
+    "ticker": "020180",
+    "name": "대신정보통신",
+    "side": "BUY",
+    "qty": 39,
+    "price": 3670.0,
+    "status": "FILLED",
+    "filled_qty": 39,
+    "env": "real"
+  },
+  {
+    "rebalance_date": "2026-10-30",
+    "ticker": "021050",
+    "name": "서원",
+    "side": "BUY",
+    "qty": 148,
+    "price": 953.0,
+    "status": "FILLED",
+    "filled_qty": 148,
+    "env": "real"
+  },
+  {
+    "rebalance_date": "2026-10-30",
+    "ticker": "030720",
+    "name": "동원수산",
+    "side": "BUY",
+    "qty": 28,
+    "price": 5110.0,
+    "status": "FILLED",
+    "filled_qty": 28,
+    "env": "real"
+  },
+  {
+    "rebalance_date": "2026-10-30",
+    "ticker": "035460",
+    "name": "기산텔레콤",
+    "side": "BUY",
+    "qty": 69,
+    "price": 2075.0,
+    "status": "FILLED",
+    "filled_qty": 69,
+    "env": "real"
+  },
+  {
+    "rebalance_date": "2026-10-30",
+    "ticker": "039740",
+    "name": "한국정보공학",
+    "side": "BUY",
+    "qty": 57,
+    "price": 2540.0,
+    "status": "FILLED",
+    "filled_qty": 57,
+    "env": "real"
+  },
+  {
+    "rebalance_date": "2026-10-30",
+    "ticker": "050110",
+    "name": "캠시스",
+    "side": "BUY",
+    "qty": 23,
+    "price": 6270.0,
+    "status": "FILLED",
+    "filled_qty": 23,
+    "env": "real"
+  },
+  {
+    "rebalance_date": "2026-10-30",
+    "ticker": "051380",
+    "name": "피씨디렉트",
+    "side": "BUY",
+    "qty": 107,
+    "price": 1341.0,
+    "status": "FILLED",
+    "filled_qty": 107,
+    "env": "real"
+  },
+  {
+    "rebalance_date": "2026-10-30",
+    "ticker": "053270",
+    "name": "구영테크",
+    "side": "BUY",
+    "qty": 79,
+    "price": 1840.0,
+    "status": "FILLED",
+    "filled_qty": 79,
+    "env": "real"
+  },
+  {
+    "rebalance_date": "2026-10-30",
+    "ticker": "063760",
+    "name": "이엘피",
+    "side": "BUY",
+    "qty": 56,
+    "price": 2595.0,
+    "status": "FILLED",
+    "filled_qty": 56,
+    "env": "real"
+  },
+  {
+    "rebalance_date": "2026-10-30",
+    "ticker": "089140",
+    "name": "넥스턴앤롤코리아",
+    "side": "BUY",
+    "qty": 72,
+    "price": 2015.0,
+    "status": "FILLED",
+    "filled_qty": 72,
+    "env": "real"
+  },
+  {
+    "rebalance_date": "2026-10-30",
+    "ticker": "090150",
+    "name": "아이윈",
+    "side": "BUY",
+    "qty": 25,
+    "price": 5700.0,
+    "status": "FILLED",
+    "filled_qty": 25,
+    "env": "real"
+  },
+  {
+    "rebalance_date": "2026-10-30",
+    "ticker": "115570",
+    "name": "스타플렉스",
+    "side": "BUY",
+    "qty": 59,
+    "price": 2425.0,
+    "status": "FILLED",
+    "filled_qty": 59,
+    "env": "real"
+  },
+  {
+    "rebalance_date": "2026-10-30",
+    "ticker": "128540",
+    "name": "에코캡",
+    "side": "BUY",
+    "qty": 180,
+    "price": 806.0,
+    "status": "FILLED",
+    "filled_qty": 180,
+    "env": "real"
+  },
+  {
+    "rebalance_date": "2026-10-30",
+    "ticker": "263020",
+    "name": "디케이앤디",
+    "side": "BUY",
+    "qty": 50,
+    "price": 2870.0,
+    "status": "FILLED",
+    "filled_qty": 50,
+    "env": "real"
+  },
+  {
+    "rebalance_date": "2026-10-30",
+    "ticker": "297570",
+    "name": "아틀라스링크",
+    "side": "BUY",
+    "qty": 41,
+    "price": 3550.0,
+    "status": "FILLED",
+    "filled_qty": 41,
+    "env": "real"
+  },
+  {
+    "rebalance_date": "2026-10-30",
+    "ticker": "310870",
+    "name": "디와이씨",
+    "side": "BUY",
+    "qty": 101,
+    "price": 1435.0,
+    "status": "FILLED",
+    "filled_qty": 101,
+    "env": "real"
+  },
+  {
+    "rebalance_date": "2026-10-30",
+    "ticker": "318020",
+    "name": "포인트모바일",
+    "side": "BUY",
+    "qty": 65,
+    "price": 2200.0,
+    "status": "FILLED",
+    "filled_qty": 65,
+    "env": "real"
+  }
+]
