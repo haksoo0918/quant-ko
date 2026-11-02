@@ -361,6 +361,9 @@ def create_equity_curve_figure(equity_df: pd.DataFrame) -> go.Figure:
         )
         return fig
 
+    equity_df = equity_df.copy()
+    equity_df["date"] = equity_df["date"].astype(str).str.split(" ").str[0]
+
     fig.add_trace(
         go.Scatter(
             x=equity_df["date"],
@@ -410,10 +413,13 @@ def create_equity_curve_figure(equity_df: pd.DataFrame) -> go.Figure:
         legend={"orientation": "h", "yanchor": "bottom", "y": 1.04, "xanchor": "right", "x": 1},
         margin={"l": 40, "r": 25, "t": 65, "b": 40},
     )
-    fig.update_yaxes(title_text="총자산 (원)", tickformat=",.0f", row=1, col=1)
-    fig.update_yaxes(title_text="금액 (원)", tickformat=",.0f", row=2, col=1)
-    return fig
+    # X축: 일자 범주형(category) 타입 고정으로 00:00:00 자정 시간 표기 및 비거래일 공백 원천 제거
+    fig.update_xaxes(type="category")
 
+    # Y축: 0원 기준(tozero) 적용으로 데이터 변동폭 미미 시 1원 단위 극단적 줌인 및 동일 숫자 중복 표출 방지
+    fig.update_yaxes(title_text="총자산 (원)", tickformat=",.0f", rangemode="tozero", row=1, col=1)
+    fig.update_yaxes(title_text="금액 (원)", tickformat=",.0f", rangemode="tozero", row=2, col=1)
+    return fig
 
 def create_portfolio_allocation_figure(positions_df: pd.DataFrame, cash: float) -> go.Figure:
     """보유 종목별 평가금액 및 현금 비중을 시각화하는 Plotly 차트를 생성합니다."""

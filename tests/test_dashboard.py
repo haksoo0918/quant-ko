@@ -332,6 +332,9 @@ def test_db_status_and_plotly_figures(sample_dashboard_db: Path) -> None:
 
     fig_eq = create_equity_curve_figure(eq_df)
     assert len(fig_eq.data) == 3
+    assert fig_eq.layout.xaxis.type == "category"
+    assert fig_eq.layout.yaxis.rangemode == "tozero"
+    assert fig_eq.layout.yaxis2.rangemode == "tozero"
 
     fig_alloc = create_portfolio_allocation_figure(acc_info["positions_df"], cash=acc_info["cash"])
     assert len(fig_alloc.data) >= 2
