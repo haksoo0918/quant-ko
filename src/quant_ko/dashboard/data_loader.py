@@ -700,32 +700,34 @@ def build_account_equity_curve(
 
 def load_actual_trade_logs(
     db_path: str | Path = "data/quant_ko.db",
-    mode_filter: str = "ALL",
+    mode_filter: str = "REAL",
     side_filter: str = "ALL",
     status_filter: str = "ALL",
 ) -> pd.DataFrame:
     """SQLite `orders` 테이블에서 실제 거래(주문) 기록을 조회하고 필터링합니다.
 
+    실전투자(REAL) 전용 환경을 기본값으로 조회하며, 모의투자(MOCK) 기록을 분리하거나
+    하위 호환성을 위해 mode_filter에 따른 필터링을 지원합니다.
+
     Args:
         db_path: SQLite 데이터베이스 파일 경로.
-        mode_filter: 운용 환경 필터 ('ALL', 'MOCK', 'REAL').
+        mode_filter: 운용 환경 필터 ('ALL', 'MOCK', 'REAL'). 기본값 'REAL'.
         side_filter: 매매 구분 필터 ('ALL', 'BUY', 'SELL').
         status_filter: 주문 상태 필터 ('ALL', 'FILLED', 'ORDERED', 'FAILED', 'DRY_RUN').
 
     Returns:
-        한글 컬럼명(`주문일시`, `환경(모의/실전)`, `종목코드`, `종목명`, `매매구분`,
-        `주문수량`, `주문단가`, `체결수량`, `상태`)으로 포맷팅된 DataFrame.
+        한글 컬럼명(`주문일시`, `종목코드`, `종목명`, `매매구분`,
+        `주문수량`, `주문단가`, `체결수량`, `체결상태`)으로 포맷팅된 DataFrame.
     """
     display_cols = [
         "주문일시",
-        "환경(모의/실전)",
         "종목코드",
         "종목명",
         "매매구분",
         "주문수량",
         "주문단가",
         "체결수량",
-        "상태",
+        "체결상태",
     ]
     store = DataStore(db_path)
     try:
@@ -741,8 +743,8 @@ def load_actual_trade_logs(
     df["side_norm"] = df["side"].astype(str).str.strip().str.upper()
     df["status_norm"] = df["status"].astype(str).str.strip().str.upper()
 
-    # 1. 운용 환경 필터
-    m_filter = str(mode_filter or "ALL").strip().upper()
+    # 1. 운용 환경 필터 (기본값 REAL: 실전투자 주문 전용)
+    m_filter = str(mode_filter or "REAL").strip().upper()
     if m_filter in ("MOCK", "모의", "모의투자"):
         df = df[df["env_norm"] == "MOCK"]
     elif m_filter in ("REAL", "실전", "실전투자"):
@@ -769,16 +771,13 @@ def load_actual_trade_logs(
     formatted = pd.DataFrame(
         {
             "주문일시": df["rebalance_date"].astype(str),
-            "환경(모의/실전)": df["env_norm"].map(
-                lambda x: "MOCK (모의)" if x == "MOCK" else ("REAL (실전)" if x == "REAL" else x)
-            ),
             "종목코드": df["ticker"].astype(str),
             "종목명": df["ticker"].astype(str).map(lambda t: name_map.get(t, t)),
             "매매구분": df["side_norm"],
             "주문수량": df["qty"].fillna(0).astype(int),
             "주문단가": df["price"].fillna(0.0).astype(float),
             "체결수량": df["filled_qty"].fillna(0).astype(int),
-            "상태": df["status_norm"],
+            "체결상태": df["status_norm"],
         }
     )
     return formatted[display_cols]

@@ -282,20 +282,28 @@ def test_build_account_equity_curve(sample_dashboard_db: Path) -> None:
 
 
 def test_load_actual_trade_logs_filters(sample_dashboard_db: Path) -> None:
-    """실제 거래기록 조회 및 환경/매매구분/상태별 필터링이 정확히 동작하는지 검증합니다."""
-    all_logs = load_actual_trade_logs(db_path=sample_dashboard_db)
-    assert len(all_logs) == 4
+    """실제 거래기록 조회 및 실전(REAL) 기본 필터링, 매매구분/상태별 조회가 정확히 동작하는지 검증합니다."""
+    # 기본값은 실전(REAL) 전용
+    real_default = load_actual_trade_logs(db_path=sample_dashboard_db)
     expected_cols = [
         "주문일시",
-        "환경(모의/실전)",
         "종목코드",
         "종목명",
         "매매구분",
         "주문수량",
         "주문단가",
         "체결수량",
-        "상태",
+        "체결상태",
     ]
+    assert list(real_default.columns) == expected_cols
+    assert "환경(모의/실전)" not in real_default.columns
+    assert len(real_default) == 1
+    assert real_default.iloc[0]["매매구분"] == "SELL"
+    assert real_default.iloc[0]["체결상태"] == "FILLED"
+
+    # 하위 호환성: mode_filter="ALL" 시 모의/실전 전체 4건 반환
+    all_logs = load_actual_trade_logs(db_path=sample_dashboard_db, mode_filter="ALL")
+    assert len(all_logs) == 4
     assert list(all_logs.columns) == expected_cols
     assert "알파테크" in all_logs["종목명"].values
     assert "베타바이오" in all_logs["종목명"].values
@@ -303,13 +311,12 @@ def test_load_actual_trade_logs_filters(sample_dashboard_db: Path) -> None:
     mock_only = load_actual_trade_logs(db_path=sample_dashboard_db, mode_filter="MOCK")
     assert len(mock_only) == 3
 
-    real_only = load_actual_trade_logs(db_path=sample_dashboard_db, mode_filter="REAL")
-    assert len(real_only) == 1
-    assert real_only.iloc[0]["매매구분"] == "SELL"
-
-    failed_only = load_actual_trade_logs(db_path=sample_dashboard_db, status_filter="FAILED")
+    failed_only = load_actual_trade_logs(
+        db_path=sample_dashboard_db, mode_filter="ALL", status_filter="FAILED"
+    )
     assert len(failed_only) == 1
     assert failed_only.iloc[0]["주문수량"] == 9999
+    assert failed_only.iloc[0]["체결상태"] == "FAILED"
 
 
 def test_db_status_and_plotly_figures(sample_dashboard_db: Path) -> None:
@@ -337,119 +344,122 @@ def test_db_status_and_plotly_figures(sample_dashboard_db: Path) -> None:
     assert top_df.empty
 
 
+from contextlib import contextmanager
+
+
+class _MockColumnOrTab:
+    def __init__(self, recorder: _MockStreamlit) -> None:
+        self._st = recorder
+
+    def __enter__(self) -> _MockColumnOrTab:
+        return self
+
+    def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
+        return None
+
+    def metric(self, label: str, value: Any, delta: Any = None) -> None:
+        self._st.metric(label=label, value=value, delta=delta)
+
+    def selectbox(self, label: str, options: list[Any], **kwargs: Any) -> Any:
+        return self._st.selectbox(label=label, options=options, **kwargs)
+
+
+class _MockStreamlit:
+    def __init__(self, button_clicked: bool = False) -> None:
+        self.button_clicked = button_clicked
+        self.page_config: dict[str, Any] = {}
+        self.markdowns: list[str] = []
+        self.subheaders: list[str] = []
+        self.metrics: list[tuple[str, Any, Any]] = []
+        self.plotly_charts: list[Any] = []
+        self.dataframes: list[Any] = []
+        self.tabs_created: list[str] = []
+        self.selectboxes: list[str] = []
+        self.download_buttons: list[str] = []
+        self.success_messages: list[str] = []
+        self.info_messages: list[str] = []
+        self.warning_messages: list[str] = []
+
+    def set_page_config(self, **kwargs: Any) -> None:
+        self.page_config = kwargs
+
+    def markdown(self, body: str, **kwargs: Any) -> None:
+        self.markdowns.append(body)
+
+    def subheader(self, body: str, **kwargs: Any) -> None:
+        self.subheaders.append(body)
+
+    def divider(self) -> None:
+        pass
+
+    def columns(self, spec: int | list[int]) -> list[_MockColumnOrTab]:
+        count = spec if isinstance(spec, int) else len(spec)
+        return [_MockColumnOrTab(self) for _ in range(count)]
+
+    def tabs(self, tab_labels: list[str]) -> list[_MockColumnOrTab]:
+        self.tabs_created.extend(tab_labels)
+        return [_MockColumnOrTab(self) for _ in tab_labels]
+
+    def metric(self, label: str, value: Any, delta: Any = None) -> None:
+        self.metrics.append((label, value, delta))
+
+    def plotly_chart(self, fig: Any, **kwargs: Any) -> None:
+        self.plotly_charts.append(fig)
+
+    def dataframe(self, data: Any, **kwargs: Any) -> None:
+        self.dataframes.append(data)
+
+    def selectbox(self, label: str, options: list[Any], **kwargs: Any) -> Any:
+        self.selectboxes.append(label)
+        return options[0]
+
+    def download_button(self, label: str, **kwargs: Any) -> bool:
+        self.download_buttons.append(label)
+        return False
+
+    def button(self, label: str, **kwargs: Any) -> bool:
+        return self.button_clicked
+
+    def info(self, body: str) -> None:
+        self.info_messages.append(body)
+
+    def warning(self, body: str) -> None:
+        self.warning_messages.append(body)
+
+    def success(self, body: str) -> None:
+        self.success_messages.append(body)
+
+    def toggle(self, label: str, value: bool = False, **kwargs: Any) -> bool:
+        return value
+
+    def error(self, body: str) -> None:
+        pass
+
+    def caption(self, body: str) -> None:
+        pass
+
+    @contextmanager
+    def container(self, **kwargs: Any) -> Any:
+        yield self
+
+    @contextmanager
+    def expander(self, label: str, **kwargs: Any) -> Any:
+        yield self
+
+    @contextmanager
+    def spinner(self, text: str) -> Any:
+        yield self
+
+    def image(self, image: Any, **kwargs: Any) -> None:
+        pass
+
+
 def test_streamlit_dashboard_full_ui_rendering_audit(
     sample_dashboard_db: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """대시보드 main() 실행 시 4대 탭, 메트릭, 차트, 테이블, 버튼 인터랙션이 예외 없이 렌더링되는지 검증합니다."""
-    from contextlib import contextmanager
-
     from quant_ko.dashboard import app as dashboard_app
-
-    class _MockColumnOrTab:
-        def __init__(self, recorder: _MockStreamlit) -> None:
-            self._st = recorder
-
-        def __enter__(self) -> _MockColumnOrTab:
-            return self
-
-        def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
-            return None
-
-        def metric(self, label: str, value: Any, delta: Any = None) -> None:
-            self._st.metric(label=label, value=value, delta=delta)
-
-        def selectbox(self, label: str, options: list[Any], **kwargs: Any) -> Any:
-            return self._st.selectbox(label=label, options=options, **kwargs)
-
-    class _MockStreamlit:
-        def __init__(self, button_clicked: bool = False) -> None:
-            self.button_clicked = button_clicked
-            self.page_config: dict[str, Any] = {}
-            self.markdowns: list[str] = []
-            self.subheaders: list[str] = []
-            self.metrics: list[tuple[str, Any, Any]] = []
-            self.plotly_charts: list[Any] = []
-            self.dataframes: list[Any] = []
-            self.tabs_created: list[str] = []
-            self.selectboxes: list[str] = []
-            self.download_buttons: list[str] = []
-            self.success_messages: list[str] = []
-            self.info_messages: list[str] = []
-            self.warning_messages: list[str] = []
-
-        def set_page_config(self, **kwargs: Any) -> None:
-            self.page_config = kwargs
-
-        def markdown(self, body: str, **kwargs: Any) -> None:
-            self.markdowns.append(body)
-
-        def subheader(self, body: str, **kwargs: Any) -> None:
-            self.subheaders.append(body)
-
-        def divider(self) -> None:
-            pass
-
-        def columns(self, spec: int | list[int]) -> list[_MockColumnOrTab]:
-            count = spec if isinstance(spec, int) else len(spec)
-            return [_MockColumnOrTab(self) for _ in range(count)]
-
-        def tabs(self, tab_labels: list[str]) -> list[_MockColumnOrTab]:
-            self.tabs_created.extend(tab_labels)
-            return [_MockColumnOrTab(self) for _ in tab_labels]
-
-        def metric(self, label: str, value: Any, delta: Any = None) -> None:
-            self.metrics.append((label, value, delta))
-
-        def plotly_chart(self, fig: Any, **kwargs: Any) -> None:
-            self.plotly_charts.append(fig)
-
-        def dataframe(self, data: Any, **kwargs: Any) -> None:
-            self.dataframes.append(data)
-
-        def selectbox(self, label: str, options: list[Any], **kwargs: Any) -> Any:
-            self.selectboxes.append(label)
-            return options[0]
-
-        def download_button(self, label: str, **kwargs: Any) -> bool:
-            self.download_buttons.append(label)
-            return False
-
-        def button(self, label: str, **kwargs: Any) -> bool:
-            return self.button_clicked
-
-        def info(self, body: str) -> None:
-            self.info_messages.append(body)
-
-        def warning(self, body: str) -> None:
-            self.warning_messages.append(body)
-
-        def success(self, body: str) -> None:
-            self.success_messages.append(body)
-
-        def toggle(self, label: str, value: bool = False, **kwargs: Any) -> bool:
-            return value
-
-        def error(self, body: str) -> None:
-            pass
-
-        def caption(self, body: str) -> None:
-            pass
-
-        @contextmanager
-        def container(self, **kwargs: Any) -> Any:
-            yield self
-
-        @contextmanager
-        def expander(self, label: str, **kwargs: Any) -> Any:
-            yield self
-
-        @contextmanager
-        def spinner(self, text: str) -> Any:
-            yield self
-
-        def image(self, image: Any, **kwargs: Any) -> None:
-            pass
 
     orig_load_acc = dashboard_app.load_account_and_positions
     monkeypatch.setattr(
@@ -480,7 +490,8 @@ def test_streamlit_dashboard_full_ui_rendering_audit(
     assert len(mock_st.plotly_charts) >= 3
     # 보유 종목 테이블 및 거래기록 테이블 렌더링 검증
     assert len(mock_st.dataframes) >= 2
-    assert len(mock_st.selectboxes) == 3
+    assert len(mock_st.selectboxes) == 2
+    assert mock_st.selectboxes == ["매매 구분 필터", "체결 상태 필터"]
     assert len(mock_st.download_buttons) == 1
     # 정상 진단 메시지 및 타깃 산출 메시지 확인
     assert len(mock_st.success_messages) >= 1
@@ -973,3 +984,66 @@ def test_load_cached_top20_nonexistent_cache_fallback(
     assert latest_dt == "-"
     assert count == 0
     assert df.empty
+
+
+def test_render_tab2_dynamic_metric_update(
+    sample_dashboard_db: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Tab 2 렌더링 시 필터 조건에 따라 상단 4대 메트릭이 동적으로 연동되는지 검증합니다."""
+    from quant_ko.dashboard import app as dashboard_app
+
+    store = DataStore(sample_dashboard_db)
+    store.insert_order(
+        {
+            "rebalance_date": "2026-10-16",
+            "ticker": "000020",
+            "side": "BUY",
+            "qty": 300,
+            "price": 2100.0,
+            "status": "FILLED",
+            "filled_qty": 300,
+            "env": "real",
+        }
+    )
+    store.insert_order(
+        {
+            "rebalance_date": "2026-10-16",
+            "ticker": "000020",
+            "side": "BUY",
+            "qty": 100,
+            "price": 2100.0,
+            "status": "FAILED",
+            "filled_qty": 0,
+            "env": "real",
+        }
+    )
+
+    # 1. 기본 ALL / ALL 선택 시 (실전 주문 총 3건: BUY FILLED 1건, SELL FILLED 1건, FAILED 1건)
+    mock_st1 = _MockStreamlit()
+    monkeypatch.setattr(dashboard_app, "st", mock_st1)
+    dashboard_app._render_tab2_trade_logs(db_path=str(sample_dashboard_db))
+
+    metrics_dict1 = {label: val for label, val, _ in mock_st1.metrics}
+    assert metrics_dict1["총 주문 건수"] == "3건"
+    assert metrics_dict1["매수 체결/주문"] == "1건"
+    assert metrics_dict1["매도 체결/주문"] == "1건"
+    assert metrics_dict1["실패/거부"] == "1건"
+
+    # 2. 매매구분 SELL 선택 시 동적 메트릭 변경 검증 (총 1건, 매수 0건, 매도 1건, 실패 0건)
+    class _MockStreamlitSell(_MockStreamlit):
+        def selectbox(self, label: str, options: list[Any], **kwargs: Any) -> Any:
+            self.selectboxes.append(label)
+            if label == "매매 구분 필터":
+                return "SELL"
+            return options[0]
+
+    mock_st2 = _MockStreamlitSell()
+    monkeypatch.setattr(dashboard_app, "st", mock_st2)
+    dashboard_app._render_tab2_trade_logs(db_path=str(sample_dashboard_db))
+
+    metrics_dict2 = {label: val for label, val, _ in mock_st2.metrics}
+    assert metrics_dict2["총 주문 건수"] == "1건"
+    assert metrics_dict2["매수 체결/주문"] == "0건"
+    assert metrics_dict2["매도 체결/주문"] == "1건"
+    assert metrics_dict2["실패/거부"] == "0건"

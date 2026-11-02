@@ -957,46 +957,13 @@ def _render_tab1_equity_and_portfolio(
 
 
 def _render_tab2_trade_logs(db_path: str) -> None:
-    """Tab 2: 실제 거래기록 조회 및 필터링."""
-    st.subheader("🧾 실제 거래기록 (SQLite `orders` 원장)")
-
-    all_logs = load_actual_trade_logs(db_path=db_path)
-    total_cnt = len(all_logs)
-    buy_filled_cnt = int(
-        len(
-            all_logs[
-                (all_logs["매매구분"] == "BUY")
-                & (all_logs["상태"].isin(["FILLED", "ORDERED", "PARTIAL"]))
-            ]
-        )
-    )
-    sell_filled_cnt = int(
-        len(
-            all_logs[
-                (all_logs["매매구분"] == "SELL")
-                & (all_logs["상태"].isin(["FILLED", "ORDERED", "PARTIAL"]))
-            ]
-        )
-    )
-    failed_cnt = int(len(all_logs[all_logs["상태"] == "FAILED"]))
+    """Tab 2: 실제 거래기록 조회 및 필터링 (실전투자 REAL 전용 단일화 및 동적 메트릭 연동)."""
+    st.subheader("🧾 실제 거래기록 (SQLite `orders` 원장 — 실전투자 전용)")
 
     m1, m2, m3, m4 = st.columns(4)
-    m1.metric("총 주문 건수", f"{total_cnt:,}건")
-    m2.metric("매수 체결/접수", f"{buy_filled_cnt:,}건")
-    m3.metric("매도 체결/접수", f"{sell_filled_cnt:,}건")
-    m4.metric("실패/거절 (FAILED)", f"{failed_cnt:,}건")
 
-    fcol1, fcol2, fcol3 = st.columns(3)
-    mode_choice = fcol1.selectbox(
-        "운용 환경 필터",
-        options=["ALL", "MOCK", "REAL"],
-        format_func=lambda x: {
-            "ALL": "전체 (ALL)",
-            "MOCK": "모의투자 (MOCK)",
-            "REAL": "실전투자 (REAL)",
-        }[x],
-    )
-    side_choice = fcol2.selectbox(
+    fcol1, fcol2 = st.columns(2)
+    side_choice = fcol1.selectbox(
         "매매 구분 필터",
         options=["ALL", "BUY", "SELL"],
         format_func=lambda x: {
@@ -1005,7 +972,7 @@ def _render_tab2_trade_logs(db_path: str) -> None:
             "SELL": "매도 (SELL)",
         }[x],
     )
-    status_choice = fcol3.selectbox(
+    status_choice = fcol2.selectbox(
         "체결 상태 필터",
         options=["ALL", "ORDERED", "FILLED", "FAILED", "DRY_RUN"],
         format_func=lambda x: {
@@ -1019,13 +986,49 @@ def _render_tab2_trade_logs(db_path: str) -> None:
 
     filtered_df = load_actual_trade_logs(
         db_path=db_path,
-        mode_filter=mode_choice,
+        mode_filter="REAL",
         side_filter=side_choice,
         status_filter=status_choice,
     )
 
+    total_cnt = len(filtered_df)
+    buy_filled_cnt = (
+        int(
+            len(
+                filtered_df[
+                    (filtered_df["매매구분"] == "BUY")
+                    & (filtered_df["체결상태"].isin(["FILLED", "ORDERED", "PARTIAL"]))
+                ]
+            )
+        )
+        if not filtered_df.empty
+        else 0
+    )
+    sell_filled_cnt = (
+        int(
+            len(
+                filtered_df[
+                    (filtered_df["매매구분"] == "SELL")
+                    & (filtered_df["체결상태"].isin(["FILLED", "ORDERED", "PARTIAL"]))
+                ]
+            )
+        )
+        if not filtered_df.empty
+        else 0
+    )
+    failed_cnt = (
+        int(len(filtered_df[filtered_df["체결상태"] == "FAILED"]))
+        if not filtered_df.empty
+        else 0
+    )
+
+    m1.metric("총 주문 건수", f"{total_cnt:,}건")
+    m2.metric("매수 체결/주문", f"{buy_filled_cnt:,}건")
+    m3.metric("매도 체결/주문", f"{sell_filled_cnt:,}건")
+    m4.metric("실패/거부", f"{failed_cnt:,}건")
+
     if filtered_df.empty:
-        st.warning("선택한 조건에 해당하는 거래기록이 없습니다.")
+        st.warning("선택한 조건에 해당하는 실전 거래기록이 없습니다.")
     else:
         st.dataframe(filtered_df, use_container_width=True, hide_index=True)
         csv_bytes = filtered_df.to_csv(index=False).encode("utf-8-sig")
