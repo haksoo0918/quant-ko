@@ -719,6 +719,11 @@ def _render_top_header_and_kpis(
             )
             if sync_clicked:
                 try:
+                    if hasattr(fetch_live_account_and_positions, "clear"):
+                        try:
+                            fetch_live_account_and_positions.clear()
+                        except Exception:
+                            pass
                     live_res = fetch_live_account_and_positions(db_path=db_path)
                     now_str = datetime.now().strftime("%H:%M")
                     if not live_res.get("synced_at"):

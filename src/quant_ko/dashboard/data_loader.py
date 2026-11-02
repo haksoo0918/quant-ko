@@ -360,6 +360,13 @@ def load_account_and_positions(
                     )
 
                 positions_list.sort(key=lambda x: x["eval_amount"], reverse=True)
+                try:
+                    refreshed_orders = store.get_orders()
+                    if not refreshed_orders.empty:
+                        total_orders_count = len(refreshed_orders)
+                except Exception:
+                    pass
+
                 # 미입금/운용 대기 상태 감지: 보유 종목이 없고 과거 체결 주문도 없으며 잔고가 초기자본의 10% 미만인 경우
                 is_unfunded = (
                     len(positions_list) == 0
