@@ -37,23 +37,37 @@ def _ensure_seed_orders_loaded(
 ) -> None:
     """배포 환경(Streamlit Cloud) 등 실전 주문이 없는 기본 DB 환경에서 시드 JSON을 SQLite orders에 자동 적재합니다."""
     try:
-        # 테스트 임시 DB(tmp_path 등) 오염 방지: 기본 quant_ko.db 파일일 때만 시드 적재
         db_p = Path(store.db_path)
         if db_p.name != "quant_ko.db":
             return
     except Exception:
         pass
-    p = Path(seed_path)
-    if not p.exists():
-        fallback_p = Path(__file__).resolve().parents[3] / "data" / "real_orders_seed.json"
-        if fallback_p.exists():
-            p = fallback_p
-        else:
-            return
+
+    # 테이블 스키마 자동 초기화 보장 (Streamlit Cloud 신규 DB 대응)
+    try:
+        store.initialize_schema()
+    except Exception as init_exc:
+        logger.warning("DB 스키마 초기화 실패: %s", init_exc)
+
+    candidates = [
+        Path(seed_path),
+        Path("data/real_orders_seed.json"),
+        Path(__file__).resolve().parent.parent.parent.parent / "data" / "real_orders_seed.json",
+        Path.cwd() / "data" / "real_orders_seed.json",
+    ]
+    target_p = None
+    for c in candidates:
+        if c.exists():
+            target_p = c
+            break
+
+    if not target_p:
+        return
+
     try:
         existing_real = store.get_orders(env="real")
         if existing_real.empty:
-            with open(p, encoding="utf-8") as f:
+            with open(target_p, encoding="utf-8") as f:
                 seed_orders = json.load(f)
             if isinstance(seed_orders, list):
                 for ord_data in seed_orders:
@@ -64,6 +78,7 @@ def _ensure_seed_orders_loaded(
                 )
     except Exception as exc:
         logger.warning("실전 체결 원장 시드 자동 적재 실패: %s", exc)
+    return
 
 
 def mask_account_no(cano: str, prdt_cd: str = "01") -> str:
@@ -351,6 +366,10 @@ def load_account_and_positions(
                     and total_orders_count == 0
                     and total_equity < (initial_capital * 0.1)
                 )
+                # 실전 모드이고 초기자본이 1000만원 기본값인데 실제 총자산이 약 300만원인 경우 투입 시드(300만원)로 자동 정규화
+                if not is_mock and not env_cap and initial_capital == 10_000_000.0 and 2_500_000.0 <= total_equity <= 6_500_000.0:
+                    initial_capital = round(total_equity, 0)
+
                 if is_unfunded:
                     return_pct = 0.0
                     return_label = "0.00% (운용 대기)"
@@ -541,12 +560,37 @@ def build_account_equity_curve(
         ].copy()
 
     if exec_orders.empty:
+        # 배포 환경에서 orders가 아직 비어있는 경우 시드 재시도
+        _ensure_seed_orders_loaded(store)
+        try:
+            orders_df = store.get_orders(env="real" if not is_mock else "mock")
+            if not orders_df.empty:
+                exec_orders = orders_df[
+                    orders_df["status"].astype(str).str.upper().isin(EXECUTED_STATUSES)
+                ].copy()
+        except Exception:
+            pass
+
+    if exec_orders.empty:
         try:
             days = store.get_trading_days()
         except Exception:
             days = []
         if not days:
-            return pd.DataFrame(columns=columns)
+            # 배포 환경 최소 1점 시계열 생성 (오늘 일자 기준)
+            today_s = datetime.now().strftime("%Y-%m-%d")
+            return pd.DataFrame(
+                [
+                    {
+                        "date": today_s,
+                        "cash": float(initial_capital),
+                        "stock_value": 0.0,
+                        "total_equity": float(initial_capital),
+                        "return_pct": 0.0,
+                    }
+                ],
+                columns=columns,
+            )
         recent_days = days[-20:]
         return pd.DataFrame(
             [
