@@ -57,6 +57,13 @@ import plotly.graph_objects as go  # noqa: E402
 from plotly.subplots import make_subplots  # noqa: E402
 
 try:
+    import importlib
+    import quant_ko.data.store as _store_mod
+    import quant_ko.dashboard.data_loader as _dl_mod
+
+    importlib.reload(_store_mod)
+    importlib.reload(_dl_mod)
+
     from quant_ko.config import PARKING_ETF_NAME, PARKING_ETF_TICKER  # noqa: E402
     from quant_ko.dashboard.data_loader import (  # noqa: E402
         build_account_equity_curve,
@@ -85,22 +92,28 @@ def _make_right_align_config(cols: list[str]) -> dict[str, Any] | None:
     if st is None:
         return None
     col_cfg = getattr(st, "column_config", None)
-    if col_cfg is None or not hasattr(col_cfg, "Column"):
+    if col_cfg is None:
         return None
-    return {col: col_cfg.Column(alignment="right") for col in cols}
+    cfg = {}
+    for col in cols:
+        if hasattr(col_cfg, "TextColumn"):
+            cfg[col] = col_cfg.TextColumn(alignment="right")
+        elif hasattr(col_cfg, "Column"):
+            cfg[col] = col_cfg.Column(alignment="right")
+    return cfg if cfg else None
 
 
 def fetch_live_account_and_positions(
     db_path: str | Path = "data/quant_ko.db",
 ) -> dict[str, Any]:
-    """한투 API 실시간 잔고를 조회합니다 (Streamlit 환경에서는 1시간 캐시 적용)."""
+    """한투 API 실시간 잔고를 조회합니다 (Streamlit 환경에서는 30초 캐시 적용)."""
     return load_account_and_positions(db_path=db_path, fetch_live_kis=True)
 
 
 if st is not None and hasattr(st, "cache_data"):
     try:
         fetch_live_account_and_positions = st.cache_data(
-            ttl=3600, show_spinner="KIS 실시간 잔고 조회 중..."
+            ttl=30, show_spinner="KIS 실시간 잔고 조회 중..."
         )(fetch_live_account_and_positions)
     except Exception:
         pass

@@ -6,7 +6,7 @@ textColor = "#0f172a"
 font = "sans serif"
 
 [client]
-toolbarMode = "minimal"
+toolbarMode = "hidden"
 showErrorDetails = false
 
 [server]

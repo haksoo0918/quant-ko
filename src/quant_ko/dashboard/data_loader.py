@@ -220,6 +220,23 @@ def _ensure_seed_orders_loaded(
     except Exception as init_exc:
         logger.warning("DB 스키마 초기화 실패: %s", init_exc)
 
+    # 기존 DB 내 실전투자(real) 체결 완료(FILLED) 주문 중복 레코드 물리적 영구 정제 (종목·매매구분당 최신 1건만 유지)
+    try:
+        with store.get_connection() as conn:
+            conn.execute("""
+                DELETE FROM orders
+                WHERE env = 'real'
+                  AND status = 'FILLED'
+                  AND id NOT IN (
+                      SELECT MAX(id) FROM orders
+                      WHERE env = 'real' AND status = 'FILLED'
+                      GROUP BY ticker, side
+                  )
+            """)
+            conn.commit()
+    except Exception:
+        pass
+
     candidates = [
         Path(seed_path),
         Path("data/real_orders_seed.json"),
@@ -463,7 +480,10 @@ def load_account_and_positions(
     except Exception:
         orders_df = pd.DataFrame()
 
-    total_orders_count = len(orders_df)
+    try:
+        total_orders_count = len(load_actual_trade_logs(db_path=db_path, mode_filter='REAL'))
+    except Exception:
+        total_orders_count = len(orders_df)
 
     # 1. KIS API 실시간 잔고 조회 시도
     if fetch_live_kis:
