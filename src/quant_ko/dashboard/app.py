@@ -80,6 +80,16 @@ except Exception as _import_exc:
     raise
 
 
+def _make_right_align_config(cols: list[str]) -> dict[str, Any] | None:
+    """Streamlit column_config 환경에서 지정된 컬럼들을 안전하게 우측 정렬 설정합니다."""
+    if st is None:
+        return None
+    col_cfg = getattr(st, "column_config", None)
+    if col_cfg is None or not hasattr(col_cfg, "Column"):
+        return None
+    return {col: col_cfg.Column(alignment="right") for col in cols}
+
+
 def fetch_live_account_and_positions(
     db_path: str | Path = "data/quant_ko.db",
 ) -> dict[str, Any]:
@@ -112,8 +122,12 @@ DASHBOARD_CSS = """
         --accent-amber: #f59e0b;
         --accent-red: #ef4444;
     }
-    /* Streamlit 기본 개발자 툴바(Deploy 버튼, 메인 메뉴 등)를 완전히 숨겨 상단 잘림 및 겹침 방지 */
-    header[data-testid="stHeader"] {
+    /* Streamlit 기본 개발자 툴바(Deploy 버튼, 메인 메뉴, 툴팁 물음표 등)를 완전히 숨겨 상단 잘림 및 겹침 방지 */
+    header[data-testid="stHeader"],
+    [data-testid="stToolbar"],
+    [data-testid="stHeaderActionElements"],
+    .quant-header-banner [data-testid="stTooltipHoverTarget"],
+    div[data-testid="stTooltipHoverTarget"] {
         display: none !important;
     }
     .block-container {
@@ -733,7 +747,6 @@ def _render_top_header_and_kpis(
         with tcol2:
             sync_clicked = st.button(
                 "🔄 KIS 실시간 동기화",
-                help="한국투자증권 Open API에 접속하여 최신 실시간 계좌 잔고를 동기화합니다 (1시간 캐시 적용).",
                 use_container_width=True,
             )
             if sync_clicked:
@@ -769,7 +782,6 @@ def _render_top_header_and_kpis(
                 st.toggle(
                     "🔒 실전 금액 숨기기 (프라이버시)",
                     value=False,
-                    help="실전 투자 시 전체 자산 평가액, 예수금, 보유 종목별 매입/평가금액을 '***원'으로 마스킹합니다.",
                 )
             )
 
@@ -884,7 +896,15 @@ def _render_tab1_equity_and_portfolio(
                 "포트폴리오 비중(%)": positions_df["weight_pct"].map(lambda x: f"{float(x):.2f}%"),
             }
         )
-        st.dataframe(display_pos, use_container_width=True, hide_index=True)
+        pos_column_config = _make_right_align_config(
+            ["보유수량", "평균매입가", "현재가", "평가금액", "수익률(%)", "포트폴리오 비중(%)"]
+        )
+        st.dataframe(
+            display_pos,
+            use_container_width=True,
+            hide_index=True,
+            column_config=pos_column_config,
+        )
 
         # 보유 종목 긴급 리스크 및 재무 건전성 진단 섹션
         diagnoses = diagnose_held_positions_risk(positions_df, db_path=db_path)
@@ -969,8 +989,17 @@ def _render_tab1_equity_and_portfolio(
             styled_yearly["KOSPI 대비 초과수익"] = styled_yearly["KOSPI 대비 초과수익"].map(
                 lambda v: f"{v:+.2f}%p"
             )
+            yearly_column_config = _make_right_align_config(
+                ["전략(소형주+계절성)", "KOSPI 지수", "KOSDAQ 지수", "KOSPI 대비 초과수익"]
+            )
             # 11개 행 전체가 스크롤 없이 한눈에 딱 맞게 표시되도록 높이 지정 (헤더 38px + 11행*35px = 약 430px)
-            st.dataframe(styled_yearly, use_container_width=True, hide_index=True, height=435)
+            st.dataframe(
+                styled_yearly,
+                use_container_width=True,
+                hide_index=True,
+                height=435,
+                column_config=yearly_column_config,
+            )
     else:
         st.info("10.5개년 백테스트 시계열 데이터가 준비되지 않았습니다.")
 
@@ -1072,7 +1101,13 @@ def _render_tab2_trade_logs(db_path: str) -> None:
                 lambda r: resolve_company_name(str(r["종목코드"]), str(r.get("종목명") or "")),
                 axis=1,
             )
-        st.dataframe(display_orders, use_container_width=True, hide_index=True)
+        orders_column_config = _make_right_align_config(["주문수량", "주문단가", "체결수량"])
+        st.dataframe(
+            display_orders,
+            use_container_width=True,
+            hide_index=True,
+            column_config=orders_column_config,
+        )
         csv_bytes = filtered_df.to_csv(index=False).encode("utf-8-sig")
         st.download_button(
             label="📥 조회된 거래기록 CSV 다운로드",
@@ -1200,7 +1235,25 @@ def _render_tab4_universe_and_status(db_path: str) -> None:
             "Total Rank",
         ]
         available_cols = [c for c in cols if c in top20_df.columns]
-        st.dataframe(top20_df[available_cols], use_container_width=True, hide_index=True)
+        top20_column_config = _make_right_align_config(
+            [
+                "시가총액(억)",
+                "PER",
+                "PSR",
+                "POR",
+                "PGPR",
+                "부채비율(%)",
+                "밸류순위평균",
+                "성장순위평균",
+                "Total Rank",
+            ]
+        )
+        st.dataframe(
+            top20_df[available_cols],
+            use_container_width=True,
+            hide_index=True,
+            column_config=top20_column_config,
+        )
 
         # 팩터 밸런스 프로파일 시각화 (밸류 vs 성장 순위 비교)
         if "밸류순위평균" in top20_df.columns and "성장순위평균" in top20_df.columns:

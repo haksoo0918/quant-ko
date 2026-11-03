@@ -368,7 +368,14 @@ class _MockColumnOrTab:
         return self._st.selectbox(label=label, options=options, **kwargs)
 
 
+class _MockColumnConfig:
+    @staticmethod
+    def Column(*args, **kwargs):
+        return kwargs
+
+
 class _MockStreamlit:
+    column_config = _MockColumnConfig()
     def __init__(self, button_clicked: bool = False) -> None:
         self.button_clicked = button_clicked
         self.page_config: dict[str, Any] = {}

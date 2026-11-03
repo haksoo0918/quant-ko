@@ -7,7 +7,12 @@
 
 ## [1.7.2] - 2026-11-03
 
-### 안정성 및 배포 환경 보강 (Stability & Cloud Deployment)
+### UI/UX 개선 및 안정성 강화 (UI/UX & Stability)
+- **헤더 우상단 물음표(?) 툴팁 아이콘 완전 제거 (`src/quant_ko/dashboard/app.py`)**:
+  - `st.button`(실시간 동기화) 및 `st.toggle`(프라이버시 모드) 컨트롤의 `help` 파라미터를 제거하여 원형 물음표 아이콘 노출 방지.
+  - Streamlit 개발자 툴바 및 툴팁 타깃 CSS 숨김 규칙 보강.
+- **테이블 수치 데이터(수량, 금액, 수익률, 지표) 일괄 우측 정렬 적용 (`src/quant_ko/dashboard/app.py`)**:
+  - `_make_right_align_config()` 헬퍼를 도입하여 대시보드 4대 테이블(Tab 1 보유 포트폴리오, Tab 1 연도별 수익률, Tab 2 실제 거래기록, Tab 4 최신 타깃 20종목)의 모든 가격, 수량, 수익률, 팩터 순위 컬럼에 `column_config.Column(alignment="right")` 적용.
 - **Streamlit Cloud 진입점 예외 바운더리 및 Secrets 사전 주입 (`src/quant_ko/dashboard/app.py`, `src/quant_ko/dashboard/data_loader.py`)**:
   - `st.secrets` 평탄화 환경변수 동기화를 모듈 임포트 이전으로 전진 배치하여 초기화 시점의 환경변수 누락 차단.
   - `sys.path`에 `src` 및 프로젝트 루트 경로를 명시적으로 등록하여 Cloud 런타임의 모듈 탐색 실패 방지.
