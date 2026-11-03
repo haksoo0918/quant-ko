@@ -125,7 +125,7 @@ class DataStore:
         """데이터베이스 테이블 및 인덱스가 존재하지 않는 경우 초기화 생성합니다."""
         with self.get_connection() as conn:
             conn.executescript(SCHEMA_SQL)
-            # 동일 주문(일자, 종목, 구분, 환경, 상태, 수량)의 비정상 완전 중복 레코드 정리
+            # 1. 동일 주문(일자, 종목, 구분, 환경, 상태, 수량)의 비정상 완전 중복 레코드 정리
             try:
                 conn.execute("""
                     DELETE FROM orders
@@ -133,6 +133,20 @@ class DataStore:
                         SELECT MIN(id) FROM orders
                         GROUP BY rebalance_date, ticker, side, env, status, qty
                     )
+                """)
+            except Exception:
+                pass
+            # 2. 실전투자(real) 체결 완료(FILLED) 주문의 중복 레코드 물리적 영구 정제 (종목·매매구분당 최신 1건만 유지)
+            try:
+                conn.execute("""
+                    DELETE FROM orders
+                    WHERE env = 'real'
+                      AND status = 'FILLED'
+                      AND id NOT IN (
+                          SELECT MAX(id) FROM orders
+                          WHERE env = 'real' AND status = 'FILLED'
+                          GROUP BY ticker, side
+                      )
                 """)
             except Exception:
                 pass
@@ -379,9 +393,42 @@ class DataStore:
         record = dict(order)
         record.setdefault("filled_qty", 0)
 
-        # 동일 (rebalance_date, ticker, side, env, status) 완전 중복 주문 존재 시 기존 ID 재사용
         with self.get_connection() as conn:
             cursor = conn.cursor()
+
+            # 1. 실전 매매(real)의 경우: 동일 종목·매매구분의 FILLED 체결 건이 이미 존재하면 중복 행 생성 원천 차단 및 기존 레코드 갱신
+            env_str = str(record.get("env", "")).strip().lower()
+            status_str = str(record.get("status", "")).strip().upper()
+            if env_str == "real" and status_str == "FILLED":
+                cursor.execute(
+                    """
+                    SELECT id FROM orders
+                    WHERE env = 'real'
+                      AND ticker = :ticker
+                      AND side = :side
+                      AND status = 'FILLED'
+                    ORDER BY id DESC
+                    LIMIT 1
+                    """,
+                    record,
+                )
+                existing = cursor.fetchone()
+                if existing:
+                    order_id = existing[0]
+                    record_update = dict(record)
+                    record_update["id"] = order_id
+                    cursor.execute(
+                        """
+                        UPDATE orders
+                        SET qty = :qty, price = :price, filled_qty = COALESCE(:filled_qty, 0)
+                        WHERE id = :id
+                        """,
+                        record_update,
+                    )
+                    conn.commit()
+                    return order_id
+
+            # 2. 동일 (rebalance_date, ticker, side, env, status) 완전 중복 주문 존재 시 기존 ID 재사용
             cursor.execute(
                 """
                 SELECT id FROM orders

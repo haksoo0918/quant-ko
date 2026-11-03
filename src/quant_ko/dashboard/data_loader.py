@@ -271,6 +271,22 @@ def _ensure_seed_orders_loaded(
                     "실전 주문 시드 신규 %d건을 SQLite orders 테이블에 동기화 적재했습니다.",
                     inserted_cnt,
                 )
+            # 실전투자(real) 체결 완료(FILLED) 주문의 중복 레코드 물리적 정제 (종목·매매구분당 최신 1건만 유지)
+            try:
+                with store.get_connection() as conn:
+                    conn.execute("""
+                        DELETE FROM orders
+                        WHERE env = 'real'
+                          AND status = 'FILLED'
+                          AND id NOT IN (
+                              SELECT MAX(id) FROM orders
+                              WHERE env = 'real' AND status = 'FILLED'
+                              GROUP BY ticker, side
+                          )
+                    """)
+                    conn.commit()
+            except Exception:
+                pass
             if comp_records:
                 try:
                     store.upsert_companies(comp_records)
@@ -456,17 +472,10 @@ def load_account_and_positions(
             if client.app_key and client.app_secret and client.account_prefix:
                 balance = client.fetch_balance()
 
-                # 실전 브로커 체결 주문 내역 조회 및 SQLite orders 테이블 동기화
+                # 실전 브로커 당일 체결 주문 내역 조회 및 SQLite orders 테이블 동기화
                 if hasattr(client, "fetch_orders"):
                     try:
-                        broker_orders = []
-                        for chk_dt in [None, "20261030"]:
-                            try:
-                                b_ords = client.fetch_orders(date=chk_dt) if chk_dt else client.fetch_orders()
-                                if b_ords:
-                                    broker_orders.extend(b_ords)
-                            except Exception:
-                                pass
+                        broker_orders = client.fetch_orders() or []
                         if broker_orders:
                             existing_real = store.get_orders(env="real")
                             for b_ord in broker_orders:
@@ -520,12 +529,12 @@ def load_account_and_positions(
                                                 )
                                             break
 
-                                # 이미 FILLED 체결된 일반 종목은 다른 날짜로 중복 유입 방지
+                                # 이미 FILLED 체결된 종목은 다른 날짜로 중복 유입 방지
                                 already_filled_tickers = set(
                                     existing_real[existing_real["status"].astype(str).str.upper() == "FILLED"]["ticker"]
                                     .astype(str).str.strip().str.zfill(6)
                                 ) if not existing_real.empty and "status" in existing_real.columns else set()
-                                if b_ticker.zfill(6) in already_filled_tickers and b_ticker.zfill(6) != "290120":
+                                if b_ticker.zfill(6) in already_filled_tickers:
                                     is_present = True
 
                                 if not is_present:
@@ -1016,11 +1025,12 @@ def load_actual_trade_logs(
     )
 
     if m_filter in ("REAL", "실전", "실전투자"):
-        # 1. 동일 (일자, 종목, 구분)에 이미 FILLED 체결이 있는 경우 중복 ORDERED/DRY_RUN 임시 레코드 정리
-        filled_keys = set(
+        df["ticker_norm"] = df["ticker"].astype(str).str.strip().str.zfill(6)
+
+        # 1. 동일 (ticker_norm, side_norm)에 이미 FILLED 체결이 있는 경우 ORDERED/DRY_RUN 임시 레코드 정리
+        filled_pairs = set(
             zip(
-                df[df["status_norm"] == "FILLED"]["rebalance_date"],
-                df[df["status_norm"] == "FILLED"]["ticker"],
+                df[df["status_norm"] == "FILLED"]["ticker_norm"],
                 df[df["status_norm"] == "FILLED"]["side_norm"],
                 strict=False,
             )
@@ -1028,25 +1038,24 @@ def load_actual_trade_logs(
         to_drop = df[
             (df["status_norm"].isin(["ORDERED", "DRY_RUN"]))
             & df.apply(
-                lambda r: (r["rebalance_date"], r["ticker"], r["side_norm"]) in filled_keys,
+                lambda r: (r["ticker_norm"], r["side_norm"]) in filled_pairs,
                 axis=1,
             )
         ].index
         if not to_drop.empty:
             df = df.drop(index=to_drop)
 
-        # 2. 10/30 공식 리밸런싱 주문 외에 오늘 날짜 등 임의 일자로 중복 복제 유입된 KIS 실시간 동기화 가짜 레코드 제거
-        oct30_filled_tickers = set(
-            df[(df["rebalance_date"] == "2026-10-30") & (df["status_norm"] == "FILLED")]["ticker"]
-        )
-        bogus_dup_mask = (
-            (df["ticker"] != "290120")
-            & (df["rebalance_date"] != "2026-10-30")
-            & (df["ticker"].isin(oct30_filled_tickers))
-            & (df["status_norm"] == "FILLED")
-        )
-        if bogus_dup_mask.any():
-            df = df[~bogus_dup_mask]
+        # 2. 실전 매수 체결(FILLED)은 종목당 무조건 단 1건만 유지 (최신 id 기준 단일 진실원천)
+        filled_mask = df["status_norm"] == "FILLED"
+        filled_df = df[filled_mask].copy()
+        other_df = df[~filled_mask].copy()
+
+        if not filled_df.empty:
+            filled_df = filled_df.sort_values("id", ascending=False).drop_duplicates(
+                subset=["ticker_norm", "side_norm"],
+                keep="first",
+            )
+        df = pd.concat([filled_df, other_df], ignore_index=True)
     name_map = _load_company_name_map(store)
     df = df.sort_values("id", ascending=False).reset_index(drop=True)
 

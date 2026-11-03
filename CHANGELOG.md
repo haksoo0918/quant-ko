@@ -8,12 +8,16 @@
 ## [1.7.3] - 2026-11-03
 
 ### 품질 및 신뢰성 강화 (Quality & Reliability)
+- **실전 주문 중복 원천 차단 및 DB 영구 정제 (`src/quant_ko/data/store.py`, `src/quant_ko/dashboard/data_loader.py`)**:
+  - `DataStore.insert_order()`: 실전(`env='real'`) 체결 완료(`status='FILLED'`) 주문 등록 시, 동일 종목·매매구분의 체결 레코드가 이미 존재할 경우 신규 중복 INSERT를 원천 차단하고 기존 주문 ID 재사용 및 갱신(Upsert) 적용.
+  - `DataStore.initialize_schema()` 및 `_ensure_seed_orders_loaded()`: DB 초기화 및 대시보드 시드 로드 시 기존 중복 적재된 실전 체결 레코드를 종목당 최신 1건만 남기고 물리적으로 영구 삭제(`DELETE`).
+  - `data_loader.py`: 하드코딩된 과거 일자(`"20261030"`) 조회 루프를 제거하여 향후 매월 리밸런싱 시의 중복 재발 방지. `load_actual_trade_logs()`에서 종목당 단 1건의 `FILLED` 체결만 단일 진실원천으로 추출하여 총 주문 건수 21건(매수 20건 / 미체결 1건) 영구 보장.
 - **대시보드 자동 데이터 건강성(Health) 검증 스위트 구축 (`scripts/verify_dashboard_health.py`, `tests/test_dashboard_health.py`)**:
   - Tab 2 실제 거래기록 4대 핵심 지표(총 21건 / 매수 체결 20건 / 매도 체결 0건 / 실패·미체결 1건) 기계적 assert 검증.
   - 한글 종목명 누락 0건(종목코드가 명칭으로 표출되는 오염 레코드 전수 차단) 검증.
   - Tab 1 계좌 총자산(5,840,069원)과 자산곡선 일치성(오차 0원) 검증.
   - Tab 4 최신 타깃 20종목 Total Rank 오름차순 및 6자리 종목코드 무결성 검증.
-  - `pytest` 테스트 스위트에 등록하여 배포 전 데이터 이상 발견 시 즉시 배포 차단 체계 완비.
+  - 41건 중복 오염 상태에서도 21건으로 즉시 복원되는 회귀 내구성 테스트(`test_dirty_db_duplicate_orders_purge_and_resilience`) 포함 170개 전체 테스트 All Green 검증 완료.
 
 ## [1.7.2] - 2026-11-03
 
