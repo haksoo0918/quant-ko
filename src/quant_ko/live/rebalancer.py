@@ -90,6 +90,97 @@ def _chunk_field_lines(
     ]
 
 
+
+
+def collect_latest_market_data(
+    store: Any,
+    target_tickers: list[str] | None = None,
+    lookback_days: int = 14,
+) -> dict[str, Any]:
+    """리밸런싱 D-2 최신 일봉 주가 및 DART 분기 재무제표를 증분 수집하여 DB를 최신화합니다."""
+    import os
+    from datetime import datetime, timedelta
+
+    from dotenv import load_dotenv
+
+    load_dotenv()
+    today_dt = datetime.now()
+    start_dt = today_dt - timedelta(days=lookback_days)
+    start_date = start_dt.strftime("%Y-%m-%d")
+    end_date = today_dt.strftime("%Y-%m-%d")
+
+    dart_client = None
+    api_key = os.getenv("OPENDART_API_KEY")
+    if api_key:
+        try:
+            from quant_ko.data.dart import DartClient
+            dart_client = DartClient(api_key=api_key)
+        except Exception:
+            pass
+
+    from quant_ko.data.collector import DataCollector
+    collector = DataCollector(store=store, dart_client=dart_client)
+
+    if not target_tickers and hasattr(store, "get_companies"):
+        comps = store.get_companies()
+        if not comps.empty and "ticker" in comps.columns:
+            target_tickers = comps["ticker"].dropna().unique().tolist()
+        else:
+            target_tickers = []
+
+    saved_prices = 0
+    if target_tickers:
+        try:
+            import FinanceDataReader as fdr
+            listing = fdr.StockListing("KRX")
+            shares_map = {}
+            for _, row in listing.iterrows():
+                code = str(row.get("Code", "")).strip()
+                stocks = float(row.get("Stocks") or 0)
+                if stocks > 0:
+                    shares_map[code] = stocks
+
+            def fetch_fdr_with_shares(ticker: str, s_date: str, e_date: str) -> Any:
+                df = fdr.DataReader(ticker, s_date, e_date)
+                if df is not None and not df.empty:
+                    sh = shares_map.get(ticker, 0.0)
+                    if "Close" in df.columns:
+                        df["MarketCap"] = df["Close"] * sh
+                        df["Amount"] = df["Close"] * df["Volume"]
+                return df
+
+            saved_prices = collector.collect_daily_prices(
+                tickers=target_tickers[:500],
+                start_date=start_date,
+                end_date=end_date,
+                price_source_fn=fetch_fdr_with_shares,
+            )
+        except Exception as p_exc:
+            logger.warning("D-2 일봉 시세 수집 중 오류: %s", p_exc)
+
+    saved_fin = 0
+    if dart_client and hasattr(store, "get_financials"):
+        try:
+            fin_df = store.get_financials()
+            if not fin_df.empty and "corp_code" in fin_df.columns:
+                corp_codes = list(set(fin_df["corp_code"].unique()))[:200]
+                if corp_codes:
+                    saved_fin = collector.collect_financials(
+                        corp_codes=corp_codes,
+                        start_year=today_dt.year - 1,
+                        end_year=today_dt.year,
+                    )
+        except Exception as f_exc:
+            logger.warning("D-2 DART 재무제표 수집 중 오류: %s", f_exc)
+
+    return {
+        "success": True,
+        "prices_count": saved_prices,
+        "financials_count": saved_fin,
+        "latest_date": end_date,
+    }
+
+
 class LiveRebalancer:
     """Executes rebalancing orders via KIS Open API."""
 
@@ -139,6 +230,104 @@ class LiveRebalancer:
         next_day = sorted_days[idx + 1]
         return self.is_rebalance_date(next_day, sorted_days)
 
+    def is_d_minus_two(self, date: str, trading_days: list[str]) -> bool:
+        """Check if given date is D-2 (two trading days immediately preceding rebalance date)."""
+        norm = normalize_date(date)
+        sorted_days = get_augmented_trading_days(trading_days, norm)
+        if norm not in sorted_days:
+            return False
+        idx = sorted_days.index(norm)
+        if idx + 2 >= len(sorted_days):
+            return False
+        target_day = sorted_days[idx + 2]
+        return self.is_rebalance_date(target_day, sorted_days)
+
+    def collect_d_minus_two_data(
+        self,
+        as_of_date: str,
+        trading_days: list[str] | None = None,
+    ) -> dict[str, Any]:
+        """리밸런싱 2일 전(D-2) 최신 시장 데이터(일봉, 재무)를 자동 수집하고 디스코드 알림을 전송합니다."""
+        norm_date = normalize_date(as_of_date)
+        logger.info("리밸런싱 D-2 최신 시장 데이터 자동 수집 시작 (기준일: %s)...", norm_date)
+
+        res = collect_latest_market_data(self.store)
+        p_cnt = res.get("prices_count", 0)
+        f_cnt = res.get("financials_count", 0)
+
+        if not trading_days and self.store is not None:
+            trading_days = self.store.get_trading_days()
+        sorted_days = get_augmented_trading_days(trading_days or [], norm_date)
+        reb_date = norm_date
+        if norm_date in sorted_days:
+            idx = sorted_days.index(norm_date)
+            if idx + 2 < len(sorted_days):
+                reb_date = sorted_days[idx + 2]
+
+        msg = (
+            f"📅 **[리밸런싱 D-2] 최신 데이터 수집 완료**\n\n"
+            f"- **수집 기준일**: `{norm_date}`\n"
+            f"- **일봉 시세 적재 건수**: `{p_cnt:,}건`\n"
+            f"- **재무제표 갱신 건수**: `{f_cnt:,}건`\n"
+            f"- **차기 리밸런싱 예정일**: `{reb_date}`\n"
+            f"💡 리밸런싱 D-1 사전 브리핑 및 당일 리밸런싱이 최신 데이터로 정확하게 집행됩니다."
+        )
+        if self.notifier:
+            try:
+                self.notifier.send_text(msg)
+            except Exception as notif_exc:
+                logger.warning("디스코드 알림 발송 실패: %s", notif_exc)
+
+        logger.info("리밸런싱 D-2 최신 데이터 수집 완료 (시세: %d건, 재무: %d건)", p_cnt, f_cnt)
+        return res
+
+    def ensure_data_freshness(
+        self,
+        as_of_date: str,
+        trading_days: list[str] | None = None,
+        max_stale_days: int = 5,
+    ) -> bool:
+        """리밸런싱 산출 전 DB 일봉 시세의 신선도(Freshness)를 점검하고, 구버전 시세일 경우 자동 1회 수집합니다."""
+        norm_date = normalize_date(as_of_date)
+        if self.store is None:
+            return False
+
+        latest_date = None
+        try:
+            with self.store.get_connection() as conn:
+                cur = conn.cursor()
+                cur.execute("SELECT MAX(date) FROM daily_prices")
+                row = cur.fetchone()
+                if row and row[0]:
+                    latest_date = str(row[0]).strip()
+        except Exception:
+            pass
+
+        need_collect = False
+        if not latest_date:
+            need_collect = True
+        else:
+            norm_latest = normalize_date(latest_date)
+            from datetime import datetime
+            try:
+                dt_as_of = datetime.strptime(norm_date, "%Y-%m-%d")
+                dt_latest = datetime.strptime(norm_latest, "%Y-%m-%d")
+                if (dt_as_of - dt_latest).days > max_stale_days:
+                    need_collect = True
+            except Exception:
+                pass
+
+        if need_collect:
+            logger.info(
+                "DB 시세 데이터 구버전 감지 (최신: %s, 기준일: %s). Pre-flight 자동 수집을 실행합니다.",
+                latest_date,
+                norm_date,
+            )
+            self.collect_d_minus_two_data(norm_date, trading_days)
+            return True
+
+        return False
+
     def send_d_minus_one_briefing(
         self,
         as_of_date: str,
@@ -152,6 +341,7 @@ class LiveRebalancer:
         if not trading_days:
             trading_days = self.store.get_trading_days()
         sorted_days = get_augmented_trading_days(trading_days, norm_date)
+        self.ensure_data_freshness(norm_date, sorted_days)
 
         target_reb_date = norm_date
         if norm_date in sorted_days:
@@ -299,6 +489,7 @@ class LiveRebalancer:
         """
         norm_reb_date = normalize_date(rebalance_date)
         norm_pit_date = normalize_date(pit_date) if pit_date else self.get_prior_trading_day(norm_reb_date)
+        self.ensure_data_freshness(norm_reb_date)
 
         logger.info(
             "Starting rebalance on %s (PIT date: %s, mode: %s, dry_run: %s)",

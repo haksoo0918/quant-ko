@@ -58,8 +58,9 @@ from plotly.subplots import make_subplots  # noqa: E402
 
 try:
     import importlib
-    import quant_ko.data.store as _store_mod
+
     import quant_ko.dashboard.data_loader as _dl_mod
+    import quant_ko.data.store as _store_mod
 
     importlib.reload(_store_mod)
     importlib.reload(_dl_mod)

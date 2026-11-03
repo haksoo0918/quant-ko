@@ -481,7 +481,10 @@ def load_account_and_positions(
         orders_df = pd.DataFrame()
 
     try:
-        total_orders_count = len(load_actual_trade_logs(db_path=db_path, mode_filter='REAL'))
+        if Path(db_path).name == "quant_ko.db":
+            total_orders_count = len(load_actual_trade_logs(db_path=db_path, mode_filter="REAL"))
+        else:
+            total_orders_count = len(orders_df)
     except Exception:
         total_orders_count = len(orders_df)
 

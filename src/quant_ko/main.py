@@ -91,7 +91,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="quant-ko Live / Mock Quantitative Trading CLI")
     parser.add_argument(
         "--mode",
-        choices=["rebalance", "monitor", "status", "preview"],
+        choices=["rebalance", "monitor", "status", "preview", "collect"],
         default="status",
         help="Execution mode: rebalance, monitor, status, or preview (D-1 advance briefing)",
     )
@@ -201,6 +201,26 @@ def main() -> None:
             logger.error("D-1 사전 브리핑 실패")
             sys.exit(1)
 
+    elif args.mode == "collect":
+        rebalancer = LiveRebalancer(
+            store=store,
+            kis_client=kis_client,
+            notifier=notifier,
+            env=args.env,
+            strategy_mode=args.strategy,
+        )
+        logger.info("Executing manual D-2 data collection on %s...", target_date)
+        res = rebalancer.collect_d_minus_two_data(as_of_date=target_date)
+        if res.get("success"):
+            logger.info(
+                "D-2 최신 시장 데이터 수집 완료 (시세: %d건, 재무: %d건)",
+                res.get("prices_count", 0),
+                res.get("financials_count", 0),
+            )
+        else:
+            logger.error("D-2 데이터 수집 실패")
+            sys.exit(1)
+
     elif args.mode == "rebalance":
         rebalancer = LiveRebalancer(
             store=store,
@@ -215,6 +235,16 @@ def main() -> None:
         if not args.force:
             trading_days = store.get_trading_days()
             if not rebalancer.is_rebalance_date(target_date, trading_days):
+                # 1. 리밸런싱 D-2 일자인 경우: 최신 시장 데이터 자동 수집
+                if rebalancer.is_d_minus_two(target_date, trading_days):
+                    logger.info("오늘(%s)은 리밸런싱 D-2입니다. 최신 시장 데이터 자동 수집을 실행합니다...", target_date)
+                    collect_res = rebalancer.collect_d_minus_two_data(target_date, trading_days)
+                    logger.info(
+                        "D-2 데이터 수집 완료 (시세: %d건, 재무: %d건)",
+                        collect_res.get("prices_count", 0),
+                        collect_res.get("financials_count", 0),
+                    )
+                    sys.exit(0)
                 # 정기 리밸런싱일이 아닌 경우: 11-4월 활성 구간이면 미체결 잔여 종목 자동 보충 매수
                 if not is_seasonality_parking_period(target_date):
                     catchup_res = rebalancer.catchup_unfilled_orders(
