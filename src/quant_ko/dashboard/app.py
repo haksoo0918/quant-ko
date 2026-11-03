@@ -1342,11 +1342,11 @@ def main(db_path: str = "data/quant_ko.db") -> None:
     )
     st.markdown(DASHBOARD_CSS, unsafe_allow_html=True)
 
-    # 대시보드 로드 시 KIS 실시간 잔고를 조회(1시간 캐시)하여 19종목을 즉시 표시합니다.
-    # 토큰이 유효하면 기존 토큰을 재사용하고, 세션 고착 방지를 위해 직접 캐시 함수를 호출합니다.
-    try:
-        acc_info = fetch_live_account_and_positions(db_path=db_path)
-    except Exception:
+    # 기본 로드: DB 오프라인 우선 조회 (불필요한 KIS 토큰 발급 및 알림톡 차단, 1초 미만 쾌속 렌더링)
+    # 사용자가 상단 [🔄 KIS 실시간 동기화] 버튼을 클릭했을 때만 한투 API 실시간 잔고를 반영합니다.
+    if hasattr(st, "session_state") and "live_acc_info" in st.session_state:
+        acc_info = st.session_state["live_acc_info"]
+    else:
         acc_info = load_account_and_positions(db_path=db_path, fetch_live_kis=False)
 
     privacy_mode = _render_top_header_and_kpis(acc_info, db_path=db_path)
