@@ -38,6 +38,7 @@ from quant_ko.dashboard.data_loader import (  # noqa: E402
     load_cached_top20,
     load_long_term_backtest_series,
     load_top20_preview,
+    resolve_company_name,
 )
 
 try:
@@ -1055,6 +1056,11 @@ def _render_tab2_trade_logs(db_path: str) -> None:
                 display_orders["체결수량"] = display_orders["체결수량"].map(
                     lambda x: f"{int(x):,}주" if pd.notnull(x) else "-"
                 )
+        if "종목명" in display_orders.columns and "종목코드" in display_orders.columns:
+            display_orders["종목명"] = display_orders.apply(
+                lambda r: resolve_company_name(str(r["종목코드"]), str(r.get("종목명") or "")),
+                axis=1,
+            )
         st.dataframe(display_orders, use_container_width=True, hide_index=True)
         csv_bytes = filtered_df.to_csv(index=False).encode("utf-8-sig")
         st.download_button(

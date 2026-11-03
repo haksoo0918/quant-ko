@@ -33,6 +33,176 @@ CD_ETF_TICKER = PARKING_ETF_TICKER
 CD_ETF_NAME = PARKING_ETF_NAME
 EXECUTED_STATUSES = {"FILLED", "PARTIAL", "ORDERED"}
 
+PORTFOLIO_STOCK_NAMES: dict[str, str] = {
+    "002880": "디와이에이",
+    "017000": "신원종합개발",
+    "020180": "대신정보통신",
+    "021050": "서원",
+    "030720": "동원수산",
+    "035460": "기산텔레콤",
+    "039740": "한국정보공학",
+    "050110": "캠시스",
+    "051380": "피씨디렉트",
+    "053270": "구영테크",
+    "063760": "이엘피",
+    "089140": "넥스턴앤롤코리아",
+    "090150": "아이윈",
+    "115570": "스타플렉스",
+    "128540": "에코캡",
+    "263020": "디케이앤디",
+    "297570": "아틀라스링크",
+    "310870": "디와이씨",
+    "318020": "포인트모바일",
+    "290120": "DH오토리드",
+    "357870": "TIGER CD금리투자KIS(합성)",
+}
+
+_OCI_NAME_MAP_CACHE: dict[str, str] | None = None
+_SEED_TARGETS_NAME_MAP_CACHE: dict[str, str] | None = None
+
+
+def _load_oci_patch_name_map() -> dict[str, str]:
+    """data/oci_db_patch.json.gz 에서 전체 KRX 종목코드-종목명 매핑을 읽어 메모리에 캐시합니다."""
+    global _OCI_NAME_MAP_CACHE
+    if _OCI_NAME_MAP_CACHE is not None:
+        return _OCI_NAME_MAP_CACHE
+
+    candidates = [
+        Path("data/oci_db_patch.json.gz"),
+        Path(__file__).resolve().parents[3] / "data" / "oci_db_patch.json.gz",
+        Path(__file__).resolve().parent.parent.parent.parent / "data" / "oci_db_patch.json.gz",
+        Path.cwd() / "data" / "oci_db_patch.json.gz",
+    ]
+    target_p = None
+    for c in candidates:
+        if c.exists():
+            target_p = c
+            break
+
+    result: dict[str, str] = {}
+    if target_p:
+        try:
+            import gzip
+
+            with gzip.open(target_p, "rt", encoding="utf-8") as f:
+                payload = json.load(f)
+            comps = payload.get("companies", [])
+            for c in comps:
+                t = str(c.get("ticker", "")).strip()
+                n = str(c.get("name", "")).strip()
+                if t and n and n != t and not n.isdigit():
+                    t_norm = t.zfill(6) if t.isdigit() and len(t) <= 6 else t
+                    result[t_norm] = n
+                    result[t] = n
+        except Exception as exc:
+            logger.warning("OCI 패치 파일 종목명 로드 실패: %s", exc)
+
+    _OCI_NAME_MAP_CACHE = result
+    return result
+
+
+def _load_seed_and_targets_name_map() -> dict[str, str]:
+    """real_orders_seed.json 및 targets_latest.json 에서 종목코드-종목명 매핑을 읽어 캐시합니다."""
+    global _SEED_TARGETS_NAME_MAP_CACHE
+    if _SEED_TARGETS_NAME_MAP_CACHE is not None:
+        return _SEED_TARGETS_NAME_MAP_CACHE
+
+    result: dict[str, str] = {}
+    json_candidates = [
+        Path("data/real_orders_seed.json"),
+        Path(__file__).resolve().parents[3] / "data" / "real_orders_seed.json",
+        Path(__file__).resolve().parent.parent.parent.parent / "data" / "real_orders_seed.json",
+        Path.cwd() / "data" / "real_orders_seed.json",
+        Path("data/targets_latest.json"),
+        Path(__file__).resolve().parents[3] / "data" / "targets_latest.json",
+        Path(__file__).resolve().parent.parent.parent.parent / "data" / "targets_latest.json",
+        Path.cwd() / "data" / "targets_latest.json",
+    ]
+    seen_paths = set()
+    for jc in json_candidates:
+        if jc.exists():
+            resolved_str = str(jc.resolve())
+            if resolved_str not in seen_paths:
+                seen_paths.add(resolved_str)
+                try:
+                    with open(jc, encoding="utf-8") as f:
+                        data = json.load(f)
+                    items = data if isinstance(data, list) else data.get("top20", [])
+                    for item in items:
+                        t = str(item.get("ticker", "")).strip()
+                        n = str(item.get("name", "")).strip()
+                        if t and n and n != t and not n.isdigit():
+                            t_norm = t.zfill(6) if t.isdigit() and len(t) <= 6 else t
+                            result[t_norm] = n
+                            result[t] = n
+                except Exception:
+                    pass
+
+    _SEED_TARGETS_NAME_MAP_CACHE = result
+    return result
+
+
+def resolve_company_name(
+    ticker: str,
+    current_name: str | None = None,
+    store: DataStore | None = None,
+) -> str:
+    """종목코드(ticker)를 한글 기업명으로 다계층(Multi-tier) 해석합니다.
+
+    우선순위:
+    1. current_name이 유효한 한글/영문 사명인 경우 (비어있지 않고, 종목코드와 상이하며, 순수 숫자가 아님)
+    2. PORTFOLIO_STOCK_NAMES 하드코딩 사전 (21개 핵심 포트폴리오 종목 100% 보장)
+    3. store.get_companies() DB 조회 (유효 사명인 경우)
+    4. data/oci_db_patch.json.gz KRX 2,872개 전종목 스냅샷 캐시
+    5. targets_latest.json 및 real_orders_seed.json 시드 파일 캐시
+    6. 최종 폴백: 정규화된 종목코드 (t)
+    """
+    raw_t = str(ticker or "").strip()
+    if not raw_t:
+        return ""
+    t = raw_t.zfill(6) if raw_t.isdigit() and len(raw_t) <= 6 else raw_t
+
+    # 1. current_name 검증
+    if current_name:
+        c_name = str(current_name).strip()
+        if c_name and c_name != t and c_name != raw_t and not c_name.isdigit():
+            return c_name
+
+    # 2. PORTFOLIO_STOCK_NAMES 확인
+    if t in PORTFOLIO_STOCK_NAMES:
+        return PORTFOLIO_STOCK_NAMES[t]
+    if raw_t in PORTFOLIO_STOCK_NAMES:
+        return PORTFOLIO_STOCK_NAMES[raw_t]
+
+    # 3. store.get_companies([t]) DB 조회
+    if store is not None:
+        try:
+            c_df = store.get_companies([t, raw_t])
+            if not c_df.empty and "name" in c_df.columns:
+                for _, r in c_df.iterrows():
+                    db_name = str(r["name"] or "").strip()
+                    if db_name and db_name != t and db_name != raw_t and not db_name.isdigit():
+                        return db_name
+        except Exception as exc:
+            logger.debug("DB 종목명 조회 실패: %s", exc)
+
+    # 4. oci_db_patch 캐시 확인
+    oci_map = _load_oci_patch_name_map()
+    if t in oci_map:
+        return oci_map[t]
+    if raw_t in oci_map:
+        return oci_map[raw_t]
+
+    # 5. 시드 및 타깃 JSON 캐시 확인
+    seed_map = _load_seed_and_targets_name_map()
+    if t in seed_map:
+        return seed_map[t]
+    if raw_t in seed_map:
+        return seed_map[raw_t]
+
+    # 6. 폴백
+    return t
+
 
 def _ensure_seed_orders_loaded(
     store: DataStore, seed_path: str | Path = "data/real_orders_seed.json"
@@ -104,11 +274,17 @@ def _ensure_seed_orders_loaded(
                 )
             if comp_records:
                 try:
-                    c_df = store.get_companies()
-                    if c_df.empty or len(c_df) < len(comp_records):
-                        store.upsert_companies(comp_records)
+                    store.upsert_companies(comp_records)
+
+
                 except Exception as comp_exc:
                     logger.warning("시드 기반 기업 마스터 보강 실패: %s", comp_exc)
+        try:
+            from quant_ko.data.store import apply_oci_db_patch_if_needed
+
+            apply_oci_db_patch_if_needed(store)
+        except Exception as patch_exc:
+            logger.debug("OCI DB 패치 자동 적용 시도 예외 (무시 가능): %s", patch_exc)
     except Exception as exc:
         logger.warning("실전 체결 원장 시드 자동 적재 실패: %s", exc)
     return
@@ -152,44 +328,33 @@ def mask_account_no(cano: str, prdt_cd: str = "01") -> str:
 
 
 def _load_company_name_map(store: DataStore) -> dict[str, str]:
-    """SQLite companies 테이블에서 종목코드-종목명 매핑 딕셔너리를 생성합니다.
+    """SQLite companies 테이블 및 다계층 폴백에서 종목코드-종목명 매핑 딕셔너리를 생성합니다.
 
-    배포 환경(Streamlit Cloud)처럼 companies 테이블이 비어있는 경우
-    시드 JSON 파일(real_orders_seed.json, targets_latest.json)에서 종목명을 안전하게 폴백 보강합니다.
+    1. PORTFOLIO_STOCK_NAMES 복사
+    2. OCI 패치 파일(2,872개 종목) 업데이트
+    3. store.get_companies() 업데이트 (단, name이 비어있거나 코드와 동일한 오염 데이터 제외)
+    4. real_orders_seed.json 및 targets_latest.json 업데이트
+    5. PORTFOLIO_STOCK_NAMES 최우선 재보장
     """
     name_map: dict[str, str] = {CD_ETF_TICKER: CD_ETF_NAME}
+    name_map.update(PORTFOLIO_STOCK_NAMES)
+    name_map.update(_load_oci_patch_name_map())
+
     try:
         comp_df = store.get_companies()
         if not comp_df.empty and "ticker" in comp_df.columns and "name" in comp_df.columns:
             for _, row in comp_df[["ticker", "name"]].iterrows():
                 t = str(row["ticker"]).strip()
                 n = str(row["name"] or "").strip()
-                if t and n:
+                t_norm = t.zfill(6) if t.isdigit() and len(t) <= 6 else t
+                if t and n and n != t and n != t_norm and not n.isdigit():
                     name_map[t] = n
+                    name_map[t_norm] = n
     except Exception as exc:
         logger.warning("종목명 매핑 로드 실패: %s", exc)
 
-    # 폴백: 시드 파일 및 최신 타깃 스냅샷에서 누락된 한글 종목명 추가 보강
-    json_candidates = [
-        Path("data/real_orders_seed.json"),
-        Path(__file__).resolve().parent.parent.parent.parent / "data" / "real_orders_seed.json",
-        Path("data/targets_latest.json"),
-        Path(__file__).resolve().parent.parent.parent.parent / "data" / "targets_latest.json",
-    ]
-    for jc in json_candidates:
-        if jc.exists():
-            try:
-                with open(jc, encoding="utf-8") as f:
-                    data = json.load(f)
-                items = data if isinstance(data, list) else data.get("top20", [])
-                for item in items:
-                    t = str(item.get("ticker", "")).strip()
-                    n = str(item.get("name", "")).strip()
-                    if t and n and t not in name_map:
-                        name_map[t] = n
-            except Exception:
-                pass
-
+    name_map.update(_load_seed_and_targets_name_map())
+    name_map.update(PORTFOLIO_STOCK_NAMES)
     return name_map
 
 
@@ -529,7 +694,7 @@ def load_account_and_positions(
         positions_list.append(
             {
                 "ticker": ticker,
-                "name": name_map.get(ticker, ticker),
+                "name": resolve_company_name(ticker, name_map.get(ticker), store),
                 "qty": int(qty),
                 "avg_price": round(float(avg_price), 0),
                 "current_price": round(float(cur_price), 0),
@@ -845,7 +1010,9 @@ def load_actual_trade_logs(
         {
             "주문일시": df["rebalance_date"].astype(str),
             "종목코드": df["ticker"].astype(str),
-            "종목명": df["ticker"].astype(str).map(lambda t: name_map.get(t, t)),
+            "종목명": df["ticker"].astype(str).map(
+                lambda t: resolve_company_name(t, name_map.get(str(t).strip().zfill(6)), store)
+            ),
             "매매구분": df["side_norm"],
             "주문수량": df["qty"].fillna(0).astype(int),
             "주문단가": df["price"].fillna(0.0).astype(float),
@@ -853,6 +1020,26 @@ def load_actual_trade_logs(
             "체결상태": df["status_norm"],
         }
     )
+
+    # 종목코드가 종목명과 일치하는 오염 레코드 방어 및 단언 검증
+    known_tickers = set(PORTFOLIO_STOCK_NAMES.keys()) | set(_load_oci_patch_name_map().keys())
+    invalid_mask = (
+        formatted["종목코드"].astype(str).str.strip().str.zfill(6).isin(known_tickers)
+        & (formatted["종목코드"].astype(str).str.strip() == formatted["종목명"].astype(str).str.strip())
+    )
+    if invalid_mask.any():
+        for idx in formatted[invalid_mask].index:
+            t_val = str(formatted.at[idx, "종목코드"]).strip().zfill(6)
+            formatted.at[idx, "종목명"] = resolve_company_name(t_val, None, store)
+
+    invalid_count = (
+        formatted["종목코드"].astype(str).str.strip().str.zfill(6).isin(known_tickers)
+        & (formatted["종목코드"].astype(str).str.strip() == formatted["종목명"].astype(str).str.strip())
+    ).sum()
+    assert invalid_count == 0, (
+        f"Found {invalid_count} trade log rows with ticker code equal to stock name for known tickers"
+    )
+
     return formatted[display_cols]
 
 

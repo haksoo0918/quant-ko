@@ -5,6 +5,17 @@
 
 ---
 
+## [1.7.1] - 2026-11-03
+
+### 버그 수정 및 안정성 강화 (Bug Fixes & Reliability)
+- **대시보드 Tab 2 실제 거래기록 종목명 다계층 폴백 엔진 구축 (`src/quant_ko/dashboard/data_loader.py`, `src/quant_ko/dashboard/app.py`)**:
+  - `PORTFOLIO_STOCK_NAMES` 불변 사명 딕셔너리(21개 실전 종목)를 베이스라인으로 탑재하여 로컬 DB 및 배포 환경의 DB 테이블 부재 시에도 100% 한글 사명 매핑 보장.
+  - Git 추적 파일 `data/oci_db_patch.json.gz`(2,872개 KRX 전종목) 인메모리 캐시 및 6계층 사명 해석 엔진(`resolve_company_name()`) 구현.
+  - DB `companies` 테이블에 종목코드와 사명이 동일하게 오염된 레코드(`name == ticker`)가 존재해도 무결한 한글 사명으로 강제 치환.
+  - Tab 2 테이블 렌더링 직전 2차 안전 가드 추가 및 21건 실전 거래 주문 전수 한글명 표출 검증 단위 테스트(`test_company_name_resolution_and_actual_trade_logs_bulletproof`) 통과.
+
+---
+
 ## [1.7.0] - 2026-11-03
 
 ### 성능 개선 및 리팩터링 (Refactor & Performance)

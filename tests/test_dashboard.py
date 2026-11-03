@@ -17,6 +17,7 @@ from quant_ko.dashboard.app import (
     create_portfolio_allocation_figure,
 )
 from quant_ko.dashboard.data_loader import (
+    PORTFOLIO_STOCK_NAMES,
     build_account_equity_curve,
     diagnose_held_positions_risk,
     get_db_status_summary,
@@ -25,6 +26,7 @@ from quant_ko.dashboard.data_loader import (
     load_cached_top20,
     load_top20_preview,
     mask_account_no,
+    resolve_company_name,
 )
 from quant_ko.data.store import DataStore
 
@@ -1084,4 +1086,43 @@ def test_actual_trade_logs_deduplication_and_name_fallback(tmp_path: Path) -> No
     })
     df_after = load_actual_trade_logs(db_path=db_path)
     assert len(df_after) == 21
+
+
+def test_company_name_resolution_and_actual_trade_logs_bulletproof(tmp_path: Path) -> None:
+    """종목명 해석(resolve_company_name)과 실제 거래기록의 한글 종목명 무결성을 검증합니다.
+
+    1. store.get_companies()가 완전히 비어있어도 load_actual_trade_logs()는 100% 한글 종목명으로 해석
+    2. companies 테이블에 name == ticker 와 같은 오염된 데이터가 있어도 참된 종목명으로 재해석
+    3. 290120 -> DH오토리드, 002880 -> 디와이에이 정상 확인
+    """
+    # 1. 290120 및 002880 단독 해석 검증
+    for ticker_code, exp_name in PORTFOLIO_STOCK_NAMES.items():
+        assert resolve_company_name(ticker_code) == exp_name
+    assert resolve_company_name("290120") == "DH오토리드"
+    assert resolve_company_name("002880") == "디와이에이"
+    assert resolve_company_name("290120", current_name="290120") == "DH오토리드"
+    assert resolve_company_name("002880", current_name="") == "디와이에이"
+
+    # 2. companies 테이블 오염 데이터 (name == ticker) 상태에서의 방어 검증
+    db_path = tmp_path / "corrupted_companies.db"
+    store = DataStore(db_path)
+    store.initialize_schema()
+    store.upsert_companies([
+        {"ticker": "290120", "name": "290120"},
+        {"ticker": "002880", "name": "002880"},
+    ])
+    assert resolve_company_name("290120", store=store) == "DH오토리드"
+    assert resolve_company_name("002880", current_name="002880", store=store) == "디와이에이"
+
+    # 3. 빈 DB 및 orders만 존재하고 companies가 완전히 비어있는 환경에서 load_actual_trade_logs 검증
+    empty_comp_db = tmp_path / "quant_ko.db"
+    empty_store = DataStore(empty_comp_db)
+    empty_store.initialize_schema()
+
+    trade_df = load_actual_trade_logs(db_path=empty_comp_db)
+    assert not trade_df.empty
+    # 종목코드가 종목명과 동일한 행이 0건이어야 함 (100% 한글 종목명 보장)
+    assert (trade_df["종목코드"] == trade_df["종목명"]).sum() == 0
+    assert "DH오토리드" in trade_df["종목명"].values
+    assert "디와이에이" in trade_df["종목명"].values
 
