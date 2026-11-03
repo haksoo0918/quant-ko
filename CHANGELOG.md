@@ -5,6 +5,17 @@
 
 ---
 
+## [1.7.2] - 2026-11-03
+
+### 안정성 및 배포 환경 보강 (Stability & Cloud Deployment)
+- **Streamlit Cloud 진입점 예외 바운더리 및 Secrets 사전 주입 (`src/quant_ko/dashboard/app.py`, `src/quant_ko/dashboard/data_loader.py`)**:
+  - `st.secrets` 평탄화 환경변수 동기화를 모듈 임포트 이전으로 전진 배치하여 초기화 시점의 환경변수 누락 차단.
+  - `sys.path`에 `src` 및 프로젝트 루트 경로를 명시적으로 등록하여 Cloud 런타임의 모듈 탐색 실패 방지.
+  - 대시보드 핵심 모듈 임포트 구문에 Safe Error Boundary를 적용하여 Cloud 마스킹(redacted) 없이 실제 예외 및 트레이스백을 화면에 직접 표출하도록 개선.
+  - `data_loader.py`에서 미사용 불필요한 `backtest.calendar` 임포트 제거.
+
+---
+
 ## [1.7.1] - 2026-11-03
 
 ### 버그 수정 및 안정성 강화 (Bug Fixes & Reliability)

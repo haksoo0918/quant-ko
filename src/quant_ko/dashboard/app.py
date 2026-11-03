@@ -18,28 +18,12 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-# src 디렉터리를 sys.path에 자동 등록하여 Streamlit 단독 실행 시 quant_ko 모듈 임포트 보장
+# src 및 프로젝트 루트 디렉터리를 sys.path에 자동 등록하여 Streamlit 단독 실행 시 quant_ko 모듈 임포트 보장
 _src_dir = Path(__file__).resolve().parent.parent.parent
-if str(_src_dir) not in sys.path:
-    sys.path.insert(0, str(_src_dir))
-
-import pandas as pd  # noqa: E402
-import plotly.graph_objects as go  # noqa: E402
-from plotly.subplots import make_subplots  # noqa: E402
-
-from quant_ko.config import PARKING_ETF_NAME, PARKING_ETF_TICKER  # noqa: E402
-from quant_ko.dashboard.data_loader import (  # noqa: E402
-    build_account_equity_curve,
-    diagnose_held_positions_risk,
-    get_db_status_summary,
-    get_next_rebalance_countdown,
-    load_account_and_positions,
-    load_actual_trade_logs,
-    load_cached_top20,
-    load_long_term_backtest_series,
-    load_top20_preview,
-    resolve_company_name,
-)
+_root_dir = _src_dir.parent
+for _p in [str(_src_dir), str(_root_dir)]:
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
 
 try:
     import streamlit as st
@@ -67,6 +51,33 @@ try:
             pass
 except ImportError:  # pragma: no cover - 오프라인/비설치 환경에서도 모듈 임포트 보장
     st = None  # type: ignore[assignment]
+
+import pandas as pd  # noqa: E402
+import plotly.graph_objects as go  # noqa: E402
+from plotly.subplots import make_subplots  # noqa: E402
+
+try:
+    from quant_ko.config import PARKING_ETF_NAME, PARKING_ETF_TICKER  # noqa: E402
+    from quant_ko.dashboard.data_loader import (  # noqa: E402
+        build_account_equity_curve,
+        diagnose_held_positions_risk,
+        get_db_status_summary,
+        get_next_rebalance_countdown,
+        load_account_and_positions,
+        load_actual_trade_logs,
+        load_cached_top20,
+        load_long_term_backtest_series,
+        load_top20_preview,
+        resolve_company_name,
+    )
+except Exception as _import_exc:
+    import traceback
+
+    if st is not None:
+        st.error(f"❌ 대시보드 모듈 임포트 실패: {type(_import_exc).__name__}: {_import_exc}")
+        st.code(traceback.format_exc(), language="python")
+        st.stop()
+    raise
 
 
 def fetch_live_account_and_positions(

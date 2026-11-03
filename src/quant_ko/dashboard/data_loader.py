@@ -19,7 +19,6 @@ from typing import Any
 import pandas as pd
 from dotenv import load_dotenv
 
-from quant_ko.backtest.calendar import get_augmented_trading_days as get_augmented_trading_days
 from quant_ko.broker.kis import KisClient
 from quant_ko.config import PARKING_ETF_NAME, PARKING_ETF_TICKER
 from quant_ko.data.krx import normalize_date
