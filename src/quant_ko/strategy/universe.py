@@ -141,7 +141,13 @@ def filter_universe(
     universe_candidates = pd.DataFrame(valid_tickers)
 
     # 2. 일별 시세: 시가총액 및 20영업일 평균 거래대금 산출
-    price_df = store.get_daily_prices(end_date=norm_date)
+    trading_days = store.get_trading_days(end_date=norm_date)
+    start_date = (
+        trading_days[-30]
+        if len(trading_days) >= 30
+        else (trading_days[0] if trading_days else None)
+    )
+    price_df = store.get_daily_prices(start_date=start_date, end_date=norm_date)
     if price_df.empty:
         return pd.DataFrame()
 

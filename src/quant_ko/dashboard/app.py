@@ -27,6 +27,7 @@ import pandas as pd  # noqa: E402
 import plotly.graph_objects as go  # noqa: E402
 from plotly.subplots import make_subplots  # noqa: E402
 
+from quant_ko.config import PARKING_ETF_NAME, PARKING_ETF_TICKER  # noqa: E402
 from quant_ko.dashboard.data_loader import (  # noqa: E402
     build_account_equity_curve,
     diagnose_held_positions_risk,
@@ -1104,14 +1105,14 @@ def _render_tab3_strategy_spec() -> None:
     )
 
     st.markdown(
-        """
+        f"""
         <div class="rule-card">
             <h3>3. 실전 계절성 운용 vs 모의 상시보유 및 리스크 관리 규칙</h3>
             <ul>
                 <li><strong>🚀 실전투자 (<code>REAL</code> — 계절성 운용):</strong>
                     <ul>
                         <li><strong>11월 ~ 4월 (적극 투자기):</strong> 소형주 9대 팩터 상위 20종목 동일비중(각 5%) 보유</li>
-                        <li><strong>5월 ~ 10월 (안전 파킹기):</strong> <code>357870</code> <strong>TIGER CD금리투자KIS(합성) ETF 100% 파킹</strong> (소형주 비수기 하락장 회피 + CD금리 이자 수취)</li>
+                        <li><strong>5월 ~ 10월 (안전 파킹기):</strong> <code>{PARKING_ETF_TICKER}</code> <strong>{PARKING_ETF_NAME} ETF 100% 파킹</strong> (소형주 비수기 하락장 회피 + CD금리 이자 수취)</li>
                     </ul>
                 </li>
                 <li><strong>🧪 모의투자 (<code>MOCK</code> — 상시보유 검증):</strong> 5~10월 파킹 없이 365일 연중 소형주 20종목을 매월 리밸런싱하여 주문·체결·비상청산 파이프라인 상시 검증</li>

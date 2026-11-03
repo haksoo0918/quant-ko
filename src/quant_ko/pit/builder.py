@@ -22,9 +22,9 @@ class PITSnapshotBuilder:
     def __init__(self, store: DataStore) -> None:
         self.store = store
 
-    def _get_preferred_filings(
+    def _extract_preferred_filings(
         self,
-        corp_code: str,
+        df: pd.DataFrame,
         cutoff_dt: str,
     ) -> dict[tuple[int, int], dict[str, Any]]:
         """기준일(cutoff_dt) 시점 이전에 공시된 (회계연도, 분기)별 최적의 보고서를 선택합니다.
@@ -32,7 +32,6 @@ class PITSnapshotBuilder:
         연결재무제표(CFS)를 별도재무제표(OFS)보다 우선하며, 기재정정 공시가 존재할 경우
         가장 최근 공시접수일자(rcept_dt)의 보고서를 선택합니다.
         """
-        df = self.store.get_financials(corp_code=corp_code, before_rcept_dt=cutoff_dt)
         if df.empty:
             return {}
 
@@ -52,6 +51,19 @@ class PITSnapshotBuilder:
             filings[(f_year_int, qtr_int)] = chosen.to_dict()
 
         return filings
+
+    def _get_preferred_filings(
+        self,
+        corp_code: str,
+        cutoff_dt: str,
+    ) -> dict[tuple[int, int], dict[str, Any]]:
+        """기준일(cutoff_dt) 시점 이전에 공시된 (회계연도, 분기)별 최적의 보고서를 선택합니다.
+
+        연결재무제표(CFS)를 별도재무제표(OFS)보다 우선하며, 기재정정 공시가 존재할 경우
+        가장 최근 공시접수일자(rcept_dt)의 보고서를 선택합니다.
+        """
+        df = self.store.get_financials(corp_code=corp_code, before_rcept_dt=cutoff_dt)
+        return self._extract_preferred_filings(df, cutoff_dt)
 
     def _get_discrete_quarter_metrics(
         self,
@@ -101,14 +113,12 @@ class PITSnapshotBuilder:
 
         return discrete
 
-    def get_company_pit_financials(
+    def _calculate_pit_financials(
         self,
         corp_code: str,
-        as_of_date: str,
+        filings: dict[tuple[int, int], dict[str, Any]],
     ) -> dict[str, Any] | None:
-        """단일 기업의 특정 기준일자 시점 PIT 재무 지표(최근 분기 실적, TTM, YoY, 부채비율, 자본잠식률)를 산출합니다."""
-        cutoff_dt = _normalize_date_str(as_of_date)
-        filings = self._get_preferred_filings(corp_code, cutoff_dt)
+        """가용 공시 보고서 맵으로부터 PIT 재무 지표를 계산합니다."""
         if not filings:
             return None
 
@@ -216,6 +226,18 @@ class PITSnapshotBuilder:
 
         return result
 
+    def get_company_pit_financials(
+        self,
+        corp_code: str,
+        as_of_date: str,
+    ) -> dict[str, Any] | None:
+        """단일 기업의 특정 기준일자 시점 PIT 재무 지표(최근 분기 실적, TTM, YoY, 부채비율, 자본잠식률)를 산출합니다."""
+        cutoff_dt = _normalize_date_str(as_of_date)
+        filings = self._get_preferred_filings(corp_code, cutoff_dt)
+        if not filings:
+            return None
+        return self._calculate_pit_financials(corp_code, filings)
+
     def build_snapshot(
         self,
         as_of_date: str,
@@ -224,20 +246,35 @@ class PITSnapshotBuilder:
         """전체 기업 또는 지정된 기업 목록의 기준일자 시점 PIT 재무 스냅샷 DataFrame을 생성합니다."""
         cutoff_dt = _normalize_date_str(as_of_date)
 
-        if corp_codes is None:
-            # 기준일 이전 공시된 재무제표가 있는 고유 corp_code 조회
-            fin_df = self.store.get_financials(before_rcept_dt=cutoff_dt)
-            if fin_df.empty:
-                return pd.DataFrame()
-            target_codes = fin_df["corp_code"].unique().tolist()
-        else:
-            target_codes = corp_codes
+        fin_df = self.store.get_financials(before_rcept_dt=cutoff_dt)
+        if fin_df.empty:
+            return pd.DataFrame()
 
         rows: list[dict[str, Any]] = []
-        for code in target_codes:
-            snap = self.get_company_pit_financials(code, as_of_date)
-            if snap:
-                rows.append(snap)
+        if corp_codes is not None:
+            target_set = set(corp_codes)
+            fin_df = fin_df[fin_df["corp_code"].isin(target_set)]
+            if fin_df.empty:
+                return pd.DataFrame()
+            grouped = dict(tuple(fin_df.groupby("corp_code")))
+            for code in corp_codes:
+                group = grouped.get(code)
+                if group is None or group.empty:
+                    continue
+                filings = self._extract_preferred_filings(group, cutoff_dt)
+                if not filings:
+                    continue
+                snap = self._calculate_pit_financials(code, filings)
+                if snap:
+                    rows.append(snap)
+        else:
+            for code, group in fin_df.groupby("corp_code"):
+                filings = self._extract_preferred_filings(group, cutoff_dt)
+                if not filings:
+                    continue
+                snap = self._calculate_pit_financials(str(code), filings)
+                if snap:
+                    rows.append(snap)
 
         if not rows:
             return pd.DataFrame()
@@ -254,7 +291,5 @@ class PITSnapshotBuilder:
                 .to_dict()
             )
             df_snap["ticker"] = df_snap["corp_code"].map(code_to_ticker)
-
-        return df_snap
 
         return df_snap

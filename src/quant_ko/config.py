@@ -18,6 +18,9 @@ except ModuleNotFoundError:  # Python < 3.11 대비
 
 logger = logging.getLogger("quant_ko.config")
 
+PARKING_ETF_TICKER = "357870"
+PARKING_ETF_NAME = "TIGER CD금리투자KIS(합성)"
+
 # 기본 전략 및 브로커 운영 설정
 DEFAULT_CONFIG: dict[str, Any] = {
     "strategy": {

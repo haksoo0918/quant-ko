@@ -1,12 +1,72 @@
 """연 4회 분기 및 월별 리밸런싱 일정을 산출하는 캘린더 모듈."""
 
+import calendar
 from collections.abc import Sequence
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import date, datetime
 
 import pandas as pd
 
 from quant_ko.data.krx import normalize_date
+
+# 한국 고정 공휴일 및 KRX 연말 휴장일 (MM-DD)
+KRX_FIXED_HOLIDAYS = {
+    "01-01",  # 신정
+    "03-01",  # 삼일절
+    "05-05",  # 어린이날
+    "06-06",  # 현충일
+    "08-15",  # 광복절
+    "10-03",  # 개천절
+    "10-09",  # 한글날
+    "12-25",  # 성탄절
+    "12-31",  # KRX 연말 휴장일
+}
+
+
+def _generate_month_weekdays(year: int, month: int) -> list[str]:
+    """해당 연월의 평일(월~금, 고정 공휴일 및 연말 휴장일 제외) 거래일 목록을 생성합니다."""
+    _, num_days = calendar.monthrange(year, month)
+    days: list[str] = []
+    for day in range(1, num_days + 1):
+        d = date(year, month, day)
+        if d.weekday() < 5:  # 월(0) ~ 금(4)
+            mm_dd = f"{month:02d}-{day:02d}"
+            if mm_dd not in KRX_FIXED_HOLIDAYS:
+                days.append(d.strftime("%Y-%m-%d"))
+    return days
+
+
+def get_augmented_trading_days(
+    base_trading_days: Sequence[str] | list[str], target_date: str
+) -> list[str]:
+    """실전 운용 시 DB 거래일 목록에 대상 월 및 익월의 평일 거래일을 보강하여 반환합니다.
+
+    DB의 daily_prices에 과거 시세만 존재하더라도 당월 말 리밸런싱일 및 D-1일을
+    정확히 판별할 수 있도록, 대상 월의 마지막 평일이 아직 포함되지 않은 경우
+    대상 월과 익월의 평일 달력을 병합합니다.
+    """
+    norm_target = normalize_date(target_date)
+    dt = datetime.strptime(norm_target, "%Y-%m-%d")
+    year, month = dt.year, dt.month
+
+    existing_set = {normalize_date(d) for d in base_trading_days} if base_trading_days else set()
+    target_month_weekdays = _generate_month_weekdays(year, month)
+    if not target_month_weekdays:
+        return sorted(existing_set)
+
+    last_weekday_of_month = target_month_weekdays[-1]
+    month_prefix = f"{year:04d}-{month:02d}-"
+    existing_in_month = [d for d in existing_set if d.startswith(month_prefix)]
+    max_in_month = max(existing_in_month) if existing_in_month else ""
+
+    if max_in_month < last_weekday_of_month:
+        next_year = year + 1 if month == 12 else year
+        next_month = 1 if month == 12 else month + 1
+        next_month_weekdays = _generate_month_weekdays(next_year, next_month)
+        existing_set.update(target_month_weekdays)
+        existing_set.update(next_month_weekdays)
+
+    return sorted(existing_set)
 
 
 @dataclass(frozen=True)

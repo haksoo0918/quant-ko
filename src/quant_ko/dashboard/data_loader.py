@@ -19,7 +19,9 @@ from typing import Any
 import pandas as pd
 from dotenv import load_dotenv
 
+from quant_ko.backtest.calendar import get_augmented_trading_days as get_augmented_trading_days
 from quant_ko.broker.kis import KisClient
+from quant_ko.config import PARKING_ETF_NAME, PARKING_ETF_TICKER
 from quant_ko.data.krx import normalize_date
 from quant_ko.data.store import DataStore
 from quant_ko.strategy.scoring import score_and_select
@@ -27,8 +29,8 @@ from quant_ko.strategy.universe import filter_universe, is_seasonality_parking_p
 
 logger = logging.getLogger(__name__)
 
-CD_ETF_TICKER = "357870"
-CD_ETF_NAME = "TIGER CD금리투자KIS(합성)"
+CD_ETF_TICKER = PARKING_ETF_TICKER
+CD_ETF_NAME = PARKING_ETF_NAME
 EXECUTED_STATUSES = {"FILLED", "PARTIAL", "ORDERED"}
 
 

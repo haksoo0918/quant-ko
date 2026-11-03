@@ -16,7 +16,7 @@ def main():
         initial_capital=10_000_000.0,
         cost_rate=0.003,  # 편도 0.3%
         top_n=20,
-        min_trading_value=200_000_000.0,  # 2억 원
+        min_trading_value=0.0,
         market_cap_quantile=0.20,
     )
 

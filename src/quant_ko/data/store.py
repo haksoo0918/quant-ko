@@ -32,6 +32,7 @@ CREATE TABLE IF NOT EXISTS daily_prices (
 );
 
 CREATE INDEX IF NOT EXISTS idx_daily_prices_date ON daily_prices(date);
+CREATE INDEX IF NOT EXISTS idx_daily_prices_date_ticker ON daily_prices(date, ticker);
 
 CREATE TABLE IF NOT EXISTS financials (
     corp_code TEXT,
@@ -113,6 +114,8 @@ class DataStore:
             yield self._shared_memory_conn
         else:
             conn = sqlite3.connect(self.db_path)
+            conn.execute("PRAGMA journal_mode=WAL")
+            conn.execute("PRAGMA synchronous=NORMAL")
             try:
                 yield conn
             finally:

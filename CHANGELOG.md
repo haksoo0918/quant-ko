@@ -5,6 +5,27 @@
 
 ---
 
+## [1.7.0] - 2026-11-03
+
+### 성능 개선 및 리팩터링 (Refactor & Performance)
+- **백테스트 엔진 및 유니버스 성능 최적화 (src/quant_ko/backtest/engine.py, src/quant_ko/strategy/universe.py, src/quant_ko/pit/builder.py, src/quant_ko/data/store.py)**:
+  - 백테스트 루프 내 companies_df.iterrows() 상장폐지 전수 조회를 사전 빌드된 O(1) 매핑 딕셔너리로 대체하여 일별 수천 회의 불필요한 DataFrame 순회 제거.
+  - universe.py의 ilter_universe() 시세 조회를 과거 전체 풀스캔에서 최근 30영업일 윈도우 슬라이싱으로 최적화.
+  - PITSnapshotBuilder.build_snapshot()의 2,000회 단건 N+1 SQLite 쿼리를 1회 벌크 조회 및 메모리 그룹화로 최적화.
+  - daily_prices(date, ticker) 복합 인덱스 추가 및 WAL(Write-Ahead Logging) 모드 적용으로 SQLite 디스크 I/O 지연 최소화.
+- **중복 코드 및 상수 단일화 (src/quant_ko/backtest/calendar.py, src/quant_ko/live/rebalancer.py, src/quant_ko/dashboard/data_loader.py, src/quant_ko/config.py)**:
+  - 
+ebalancer.py와 data_loader.py에 중복 정의되었던 거래일 보강 달력 로직(get_augmented_trading_days, KRX_FIXED_HOLIDAYS)을 acktest.calendar로 단일화.
+  - PARKING_ETF_TICKER(357870) 및 명칭을 config.py에 단일 정의하여 여러 모듈에 산재한 매직 스트링 일원화.
+- **스크립트 및 자산 아카이빙 (scripts/archive/, scripts/archive/experiments/, scripts/run_backtest.py)**:
+  - 과거 데이터 수집용 일회성 스크립트 8종 및 백테스트 비교 실험 스크립트 8종을 scripts/archive/로 격리 보관.
+  - 
+un_backtest.py의 거래대금 기본값을 최신 PRD 기준(0원)으로 갱신.
+  - 테스트용 임시 DB 파일(data/empty_test.db, data/non_existent.db) 정리 및 
+ebalancer.py 헤더 독스트링 갱신.
+
+---
+
 ## [1.6.4] - 2026-11-02
 
 ### 추가 및 변경 (Added & Changed)

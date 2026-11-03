@@ -349,6 +349,13 @@ class BacktestEngine:
         reb_date_map = {e.rebalance_date: e for e in rebalance_events}
 
         companies_df = self.store.get_companies()
+        delisted_dates: dict[str, str] = {}
+        if not companies_df.empty and "delisted_at" in companies_df.columns:
+            for ticker, d_at in zip(
+                companies_df["ticker"], companies_df["delisted_at"], strict=False
+            ):
+                if pd.notna(d_at) and str(d_at).strip():
+                    delisted_dates[str(ticker)] = normalize_date(str(d_at))
 
         current_cash = float(self.initial_capital)
         current_positions: dict[str, int] = {}
@@ -380,12 +387,9 @@ class BacktestEngine:
                     suspended_tickers.add(t)
 
             # 당일 기준 상장폐지 종목
-            delisted_tickers: set[str] = set()
-            if not companies_df.empty and "delisted_at" in companies_df.columns:
-                for _, row in companies_df.iterrows():
-                    d_at = row.get("delisted_at")
-                    if d_at and normalize_date(str(d_at)) <= current_date:
-                        delisted_tickers.add(str(row["ticker"]))
+            delisted_tickers: set[str] = {
+                t for t, d_date in delisted_dates.items() if d_date <= current_date
+            }
 
             # 1. 기간 내 이벤트(관리/환기/거래정지/상장폐지) 처리
             current_cash, current_positions, event_trades = event_tracker.process_day(
