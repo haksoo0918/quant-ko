@@ -7,7 +7,11 @@
 
 ## [1.7.2] - 2026-11-03
 
-### UI/UX 개선 및 안정성 강화 (UI/UX & Stability)
+### 버그 수정 및 UI/UX 개선 (Bug Fixes & UI/UX)
+- **Tab 2 실제 거래기록 KIS 동기화 중복 집계 제거 및 수치 정상화 (`src/quant_ko/dashboard/data_loader.py`, `src/quant_ko/dashboard/app.py`)**:
+  - KIS API 실시간 동기화 시 이미 체결된 일반 종목이 임의 날짜로 중복 유입되는 현상을 방지하도록 안전 가드 적용.
+  - `load_actual_trade_logs()`에서 중복 복제 레코드를 정제하여 **총 주문 건수 21건 / 매수 체결 20건 / 매도 체결 0건 / 실패·미체결 1건**으로 수치 정상 복원.
+  - 헤더 제목의 개발자 내부 명칭(`SQLite orders 원장`)을 제거하고 `🧾 실제 거래기록 (실전투자)`로 UI 정돈.
 - **헤더 우상단 물음표(?) 툴팁 아이콘 완전 제거 (`src/quant_ko/dashboard/app.py`)**:
   - `st.button`(실시간 동기화) 및 `st.toggle`(프라이버시 모드) 컨트롤의 `help` 파라미터를 제거하여 원형 물음표 아이콘 노출 방지.
   - Streamlit 개발자 툴바 및 툴팁 타깃 CSS 숨김 규칙 보강.

@@ -1006,7 +1006,7 @@ def _render_tab1_equity_and_portfolio(
 
 def _render_tab2_trade_logs(db_path: str) -> None:
     """Tab 2: 실제 거래기록 조회 및 필터링 (실전투자 REAL 전용 단일화 및 동적 메트릭 연동)."""
-    st.subheader("🧾 실제 거래기록 (SQLite `orders` 원장 — 실전투자 전용)")
+    st.subheader("🧾 실제 거래기록 (실전투자)")
 
     m1, m2, m3, m4 = st.columns(4)
 
@@ -1067,8 +1067,17 @@ def _render_tab2_trade_logs(db_path: str) -> None:
         if not filtered_df.empty and status_col and side_col
         else 0
     )
+
     failed_cnt = (
-        int(len(filtered_df[filtered_df[status_col] == "FAILED"]))
+        int(
+            len(
+                filtered_df[
+                    filtered_df[status_col].isin(
+                        ["FAILED", "RESOLVED", "PENDING_CATCHUP", "REJECTED"]
+                    )
+                ]
+            )
+        )
         if not filtered_df.empty and status_col
         else 0
     )

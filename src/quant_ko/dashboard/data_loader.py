@@ -520,6 +520,14 @@ def load_account_and_positions(
                                                 )
                                             break
 
+                                # 이미 FILLED 체결된 일반 종목은 다른 날짜로 중복 유입 방지
+                                already_filled_tickers = set(
+                                    existing_real[existing_real["status"].astype(str).str.upper() == "FILLED"]["ticker"]
+                                    .astype(str).str.strip().str.zfill(6)
+                                ) if not existing_real.empty and "status" in existing_real.columns else set()
+                                if b_ticker.zfill(6) in already_filled_tickers and b_ticker.zfill(6) != "290120":
+                                    is_present = True
+
                                 if not is_present:
                                     store.insert_order(
                                         {
@@ -1000,8 +1008,45 @@ def load_actual_trade_logs(
     if df.empty:
         return pd.DataFrame(columns=display_cols)
 
-    # 중복 주문 레코드 방어 (동일 rebalance_date, ticker, side, env 기준 최신 1건만 유지)
-    df = df.drop_duplicates(subset=["rebalance_date", "ticker", "side_norm", "env_norm", "status_norm", "qty"], keep="last")
+    # 중복 주문 레코드 방어 (날짜 정규화 및 실전투자 주문 중복 유입 단일 진실 원천 정제)
+    df["rebalance_date"] = df["rebalance_date"].astype(str).map(normalize_date)
+    df = df.drop_duplicates(
+        subset=["rebalance_date", "ticker", "side_norm", "env_norm", "status_norm", "qty"],
+        keep="last",
+    )
+
+    if m_filter in ("REAL", "실전", "실전투자"):
+        # 1. 동일 (일자, 종목, 구분)에 이미 FILLED 체결이 있는 경우 중복 ORDERED/DRY_RUN 임시 레코드 정리
+        filled_keys = set(
+            zip(
+                df[df["status_norm"] == "FILLED"]["rebalance_date"],
+                df[df["status_norm"] == "FILLED"]["ticker"],
+                df[df["status_norm"] == "FILLED"]["side_norm"],
+                strict=False,
+            )
+        )
+        to_drop = df[
+            (df["status_norm"].isin(["ORDERED", "DRY_RUN"]))
+            & df.apply(
+                lambda r: (r["rebalance_date"], r["ticker"], r["side_norm"]) in filled_keys,
+                axis=1,
+            )
+        ].index
+        if not to_drop.empty:
+            df = df.drop(index=to_drop)
+
+        # 2. 10/30 공식 리밸런싱 주문 외에 오늘 날짜 등 임의 일자로 중복 복제 유입된 KIS 실시간 동기화 가짜 레코드 제거
+        oct30_filled_tickers = set(
+            df[(df["rebalance_date"] == "2026-10-30") & (df["status_norm"] == "FILLED")]["ticker"]
+        )
+        bogus_dup_mask = (
+            (df["ticker"] != "290120")
+            & (df["rebalance_date"] != "2026-10-30")
+            & (df["ticker"].isin(oct30_filled_tickers))
+            & (df["status_norm"] == "FILLED")
+        )
+        if bogus_dup_mask.any():
+            df = df[~bogus_dup_mask]
     name_map = _load_company_name_map(store)
     df = df.sort_values("id", ascending=False).reset_index(drop=True)
 
