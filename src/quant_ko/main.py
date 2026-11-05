@@ -22,7 +22,7 @@ from datetime import datetime
 
 from dotenv import load_dotenv
 
-from quant_ko.broker.kis import KisClient
+from quant_ko.broker.kis import KisClient, TokenIssueDisabledError
 from quant_ko.config import load_config
 from quant_ko.data.krx import KrxClient
 from quant_ko.data.store import DataStore, apply_oci_db_patch_if_needed
@@ -77,6 +77,9 @@ def print_status(kis_client: KisClient, env: str, date_str: str) -> None:
                 )
         else:
             print("  (현재 보유 중인 주식이 없습니다)")
+    except TokenIssueDisabledError:
+        print("계좌 잔고 조회   : [토큰 미발급/만료 상태 - 08:30 일일 감시 배치 대기]")
+        print("                 (단순 상태 조회 모드에서는 KIS 신규 토큰 발급 및 알림톡을 차단합니다)")
     except Exception as e:
         print(f"계좌 잔고 조회 실패: {e}")
 
@@ -134,6 +137,11 @@ def main() -> None:
         action="store_true",
         help="Suppress morning heartbeat Discord notification in monitor mode",
     )
+    parser.add_argument(
+        "--issue-token",
+        action="store_true",
+        help="Allow requesting a fresh KIS token if no valid token exists in status mode",
+    )
 
     args = parser.parse_args()
     target_date = args.date or get_current_date()
@@ -141,7 +149,8 @@ def main() -> None:
 
     store = DataStore("data/quant_ko.db")
     apply_oci_db_patch_if_needed(store)
-    kis_client = KisClient(is_mock=is_mock)
+    allow_issue = (args.mode != "status") or getattr(args, "issue_token", False)
+    kis_client = KisClient(is_mock=is_mock, allow_token_issue=allow_issue)
     webhook_url = os.getenv("DISCORD_WEBHOOK_URL")
     notifier = DiscordNotifier(webhook_url=webhook_url) if webhook_url else None
 

@@ -102,3 +102,22 @@ def test_get_cached_token_status_pure_check(tmp_path):
         status = KisClient.get_cached_token_status(is_mock=True)
         assert isinstance(status, dict)
         assert "is_valid" in status
+
+
+def test_main_status_mode_blocks_token_issue_by_default():
+    """main.py status 모드 실행 시 유효 토큰이 없으면 KIS API 호출이 0회이며 토큰 차단 안내가 출력되는지 검증."""
+    from unittest.mock import patch
+    from quant_ko.main import print_status
+    from quant_ko.broker.kis import KisClient, TokenIssueDisabledError
+
+    mock_client = MagicMock(spec=KisClient)
+    mock_client.account_prefix = "12345678"
+    mock_client.account_suffix = "01"
+    mock_client.fetch_balance.side_effect = TokenIssueDisabledError("Token issuance blocked in status mode")
+
+    with patch("builtins.print") as mock_print:
+        print_status(kis_client=mock_client, env="real", date_str="2026-11-05")
+        
+        # 안내 문구가 출력되었는지 확인
+        printed_texts = " ".join(str(call.args[0]) for call in mock_print.call_args_list if call.args)
+        assert "토큰 미발급/만료 상태" in printed_texts

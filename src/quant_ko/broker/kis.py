@@ -367,10 +367,12 @@ class KisClient:
         self._token_expires_at = now + expires_in
         KisClient._shared_token_cache[cache_key] = (self._access_token, self._token_expires_at)
 
-        # 안전한 권한으로 파일에 원자적(atomic) 기록
+        # 안전한 권한으로 파일에 원자적(atomic) 기록 (data/, OS temp, 사용자 홈 다중 동시 백업)
         targets = [self.token_cache_file]
-        if temp_cache and temp_cache != self.token_cache_file:
+        if temp_cache and temp_cache not in targets:
             targets.append(temp_cache)
+        if user_home_cache and user_home_cache not in targets:
+            targets.append(user_home_cache)
 
         for target_p in targets:
             tmp_file = f"{target_p}.tmp"
