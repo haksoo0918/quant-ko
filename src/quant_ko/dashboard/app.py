@@ -251,17 +251,6 @@ DASHBOARD_CSS = """
         font-weight: 700;
         box-shadow: 0 0 8px rgba(16, 185, 129, 0.25);
     }
-    .badge-token-valid {
-        background-color: #064e3b;
-        color: #34d399;
-        border: 1px solid #059669;
-        font-weight: 600;
-    }
-    .badge-token-expired, .badge-token-none {
-        background-color: #1e293b;
-        color: #94a3b8;
-        border: 1px solid #475569;
-    }
     /* 상단 배너 카드 내부 실시간 동기화 알약(Pill) 버튼 스타일링 */
     div[data-testid="stLayoutWrapper"]:has(.quant-header-banner) button {
         background: #1e293b !important;
@@ -458,19 +447,26 @@ def create_equity_curve_figure(equity_df: pd.DataFrame) -> go.Figure:
         col=1,
     )
 
+    min_eq = float(equity_df["total_equity"].min()) if not equity_df.empty else 3_000_000.0
+    max_eq = float(equity_df["total_equity"].max()) if not equity_df.empty else 3_500_000.0
+    buffer = max(50_000.0, (max_eq - min_eq) * 0.4)
+    y_min = max(0.0, min_eq - buffer)
+    y_max = max_eq + buffer
+
     fig.update_layout(
         barmode="stack",
-        height=560,
+        height=620,
         template="plotly_white",
         hovermode="x unified",
-        legend={"orientation": "h", "yanchor": "bottom", "y": 1.04, "xanchor": "right", "x": 1},
-        margin={"l": 40, "r": 25, "t": 65, "b": 40},
+        legend={"orientation": "h", "yanchor": "bottom", "y": 1.02, "xanchor": "right", "x": 1},
+        margin={"l": 60, "r": 30, "t": 85, "b": 50},
     )
     # X축: 일자 범주형(category) 타입 고정으로 00:00:00 자정 시간 표기 및 비거래일 공백 원천 제거
     fig.update_xaxes(type="category")
 
-    # Y축: 0원 기준(tozero) 적용으로 데이터 변동폭 미미 시 1원 단위 극단적 줌인 및 동일 숫자 중복 표출 방지
-    fig.update_yaxes(title_text="총자산 (원)", tickformat=",.0f", rangemode="tozero", row=1, col=1)
+    # 1행 Y축: 실제 자산 변동폭을 한눈에 볼 수 있도록 상하 버퍼 적용 오토 스케일링
+    fig.update_yaxes(title_text="총자산 (원)", tickformat=",.0f", range=[y_min, y_max], row=1, col=1)
+    # 2행 Y축: 자산 구성 비중 스택 바(0원 기준)
     fig.update_yaxes(title_text="금액 (원)", tickformat=",.0f", rangemode="tozero", row=2, col=1)
     return fig
 
@@ -826,22 +822,6 @@ def _render_top_header_and_kpis(
             sync_badge_text = "📦 DB 체결 기반 잔고"
             sync_badge_cls = "badge-offline-db"
 
-        # 토큰 캐시 유효 상태 조회 (신규 발급 절대 없음)
-        try:
-            token_stat = KisClient.get_cached_token_status(is_mock=is_mock)
-            if token_stat.get("is_valid"):
-                token_badge_text = f"🟢 토큰 유효 (잔여 {token_stat['remaining_hours']}h)"
-                token_badge_cls = "badge-token-valid"
-            elif token_stat.get("reason") == "expired":
-                token_badge_text = "⚪ 토큰 만료 (08:30 배치 대기)"
-                token_badge_cls = "badge-token-expired"
-            else:
-                token_badge_text = "⚪ 토큰 미발급 (08:30 배치 대기)"
-                token_badge_cls = "badge-token-none"
-        except Exception:
-            token_badge_text = "⚪ 토큰 미확인"
-            token_badge_cls = "badge-token-none"
-
         # 2행: 전폭(100%) 뱃지 행 - 타이틀 아래 전체 너비를 활용하여 뱃지 1줄 정렬 및 화면 잘림 완전 해소
         badge_html = (
             '<div class="quant-badge-container">'
@@ -850,7 +830,6 @@ def _render_top_header_and_kpis(
             f'<span class="quant-badge badge-countdown">{rebalance_badge_text}</span>'
             f'<span class="quant-badge badge-account">계좌: {account_masked}</span>'
             f'<span class="quant-badge {sync_badge_cls}">{sync_badge_text}</span>'
-            f'<span class="quant-badge {token_badge_cls}">{token_badge_text}</span>'
             "</div>"
         )
         st.markdown(badge_html, unsafe_allow_html=True)
