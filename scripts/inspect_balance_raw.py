@@ -4,7 +4,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 from quant_ko.broker.kis import KisClient  # noqa: E402
 
-client = KisClient()
+client = KisClient(allow_token_issue=False)
 for d_str in ["20261029", "20261030", "20261031"]:
     orders = client.fetch_orders(date=d_str)
     print(f"Date {d_str} orders count: {len(orders)}")

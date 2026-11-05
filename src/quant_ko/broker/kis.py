@@ -22,6 +22,40 @@ MOCK_BASE_URL = "https://openapivts.koreainvestment.com:29443"
 REAL_BASE_URL = "https://openapi.koreainvestment.com:9443"
 
 
+class TokenIssueDisabledError(RuntimeError):
+    """신규 KIS 토큰 발급이 비활성화(allow_token_issue=False)된 상태에서 유효한 캐시 토큰이 없을 때 발생하는 예외."""
+    pass
+
+
+def resolve_is_mock(is_mock: bool | None = None) -> bool:
+    """실행 환경이 모의투자(Mock)인지 실전(Real)인지 우선순위에 따라 판별합니다.
+
+    우선순위:
+    1. 함수 호출 시 명시적으로 전달된 is_mock 인자
+    2. config.toml의 [broker] default_env 설정 ('real' -> False, 'mock' -> True)
+    3. 레거시 환경변수 KIS_MODE ('REAL' -> False, 'MOCK' -> True)
+    4. 기본값: 안전을 위해 True (Mock 모드)
+    """
+    if is_mock is not None:
+        return bool(is_mock)
+
+    try:
+        from quant_ko.config import load_config
+
+        cfg = load_config()
+        broker_env = str(cfg.get("broker", {}).get("default_env", "")).strip().lower()
+        if broker_env in ("real", "mock"):
+            return broker_env == "mock"
+    except Exception:
+        pass
+
+    env_mode = os.getenv("KIS_MODE")
+    if env_mode:
+        return env_mode.strip().upper() != "REAL"
+
+    return True
+
+
 def get_krx_tick_size(price: float, is_etf: bool = False) -> int:
     """KRX 호가 단위를 반환합니다 (일반 주식 통합 호가 단위 및 ETF 호가 단위 적용)."""
     if is_etf:
@@ -117,13 +151,10 @@ class KisClient:
         account_no: str | None = None,
         is_mock: bool | None = None,
         session: requests.Session | None = None,
+        allow_token_issue: bool = True,
     ) -> None:
-        # 명시적으로 지정되지 않은 경우 KIS_MODE 환경변수로부터 모드 판별
-        if is_mock is None:
-            mode = os.getenv("KIS_MODE", "MOCK").strip().upper()
-            self.is_mock = mode != "REAL"
-        else:
-            self.is_mock = is_mock
+        # 명시적 인자 > config.toml의 broker.default_env > KIS_MODE > 기본값(Mock)
+        self.is_mock = resolve_is_mock(is_mock)
 
         # 환경변수 접두사 설정: KIS_MOCK_* 또는 KIS_REAL_*
         prefix = "KIS_MOCK_" if self.is_mock else "KIS_REAL_"
@@ -162,12 +193,71 @@ class KisClient:
         self._access_token: str | None = None
         self._token_expires_at: float = 0.0
         self._upper_limits: dict[str, int] = {}
+        self.allow_token_issue = allow_token_issue
 
     def get_upper_limit(self, ticker: str) -> int | None:
         """종목의 캐싱된 당일 상한가(stck_mxpr)를 반환합니다."""
         return self._upper_limits.get(ticker)
 
-    def get_access_token(self, force_refresh: bool = False) -> str:
+    @classmethod
+    def get_cached_token_status(
+        cls, is_mock: bool | None = None
+    ) -> dict[str, Any]:
+        """캐시된 KIS 토큰의 상태를 발급 API 호출 없이 순수 검사합니다."""
+        is_mock = resolve_is_mock(is_mock)
+        mode_str = "mock" if is_mock else "real"
+        now = time.time()
+
+        home_dir = os.path.expanduser("~")
+        candidates = [
+            str(Path(__file__).resolve().parents[3] / "data" / f"kis_token_{mode_str}.json"),
+            str(Path("data") / f"kis_token_{mode_str}.json"),
+            os.path.join(tempfile.gettempdir(), f"kis_token_{mode_str}.json"),
+            os.path.join(home_dir, ".kis", f"kis_token_{mode_str}.json"),
+        ]
+
+        for p_str in candidates:
+            if os.path.exists(p_str):
+                try:
+                    with open(p_str, encoding="utf-8") as f:
+                        data = json.load(f)
+                    tok = data.get("access_token")
+                    exp = float(data.get("expires_at", 0))
+                    rem = exp - now
+                    if tok and rem > 60:
+                        return {
+                            "is_valid": True,
+                            "expires_at": exp,
+                            "remaining_seconds": rem,
+                            "remaining_hours": round(rem / 3600.0, 1),
+                            "file_path": p_str,
+                            "mode": mode_str,
+                        }
+                    elif tok:
+                        return {
+                            "is_valid": False,
+                            "expires_at": exp,
+                            "remaining_seconds": 0.0,
+                            "remaining_hours": 0.0,
+                            "file_path": p_str,
+                            "mode": mode_str,
+                            "reason": "expired",
+                        }
+                except Exception:
+                    pass
+        return {
+            "is_valid": False,
+            "expires_at": 0.0,
+            "remaining_seconds": 0.0,
+            "remaining_hours": 0.0,
+            "file_path": None,
+            "mode": mode_str,
+            "reason": "not_found",
+        }
+
+    def get_access_token(
+        self, force_refresh: bool = False, allow_issue: bool | None = None
+    ) -> str:
         """OAuth 2.0 접근 토큰을 발급받거나 캐시된 토큰을 반환합니다 (메모리 및 파일 영구 캐싱).
 
         Args:
@@ -176,6 +266,9 @@ class KisClient:
         Returns:
             유효한 OAuth 접근 토큰 문자열.
         """
+        effective_allow_issue = (
+            self.allow_token_issue if allow_issue is None else allow_issue
+        )
         now = time.time()
         mode_str = "mock" if self.is_mock else "real"
         cache_key = f"{mode_str}_{self.app_key}_{os.path.abspath(self.token_cache_file)}"
@@ -188,6 +281,10 @@ class KisClient:
         )
 
         if force_refresh:
+            if not effective_allow_issue:
+                raise TokenIssueDisabledError(
+                    "KIS 신규 토큰 발급이 비활성화되어 있어 force_refresh를 수행할 수 없습니다."
+                )
             self._access_token = None
             self._token_expires_at = 0.0
             KisClient._shared_token_cache.pop(cache_key, None)
@@ -216,6 +313,10 @@ class KisClient:
 
         # 2. 파일 캐시 확인 (data/ 폴더 및 기본 경로 시 OS 임시 디렉터리 다중 경로 확인)
         candidate_files = [self.token_cache_file]
+        home_dir = os.path.expanduser("~")
+        user_home_cache = os.path.join(home_dir, ".kis", f"kis_token_{mode_str}.json")
+        if user_home_cache not in candidate_files:
+            candidate_files.append(user_home_cache)
         if temp_cache and temp_cache != self.token_cache_file:
             candidate_files.append(temp_cache)
 
@@ -258,7 +359,17 @@ class KisClient:
                 )
                 return tok
 
-        # 4. KIS API 서버에 신규 토큰 발급 요청
+        # 4. 신규 토큰 발급 허용 여부 물리적 가드 확인
+        if not effective_allow_issue:
+            logger.warning(
+                "KIS OAuth token issue is blocked (allow_token_issue=False). "
+                "No valid token found in cache. Rejecting token issuance to prevent unwanted notifications."
+            )
+            raise TokenIssueDisabledError(
+                "유효한 KIS OAuth 캐시 토큰이 없으며, 신규 토큰 발급이 차단(allow_token_issue=False)되어 있습니다."
+            )
+
+        # 5. KIS API 서버에 신규 토큰 발급 요청
         logger.info(
             "Requesting new KIS OAuth token from API (force_refresh=%s, cache_file=%s)...",
             force_refresh,
@@ -279,10 +390,12 @@ class KisClient:
         self._token_expires_at = now + expires_in
         KisClient._shared_token_cache[cache_key] = (self._access_token, self._token_expires_at)
 
-        # 안전한 권한으로 파일에 원자적(atomic) 기록
+        # 안전한 권한으로 파일에 원자적(atomic) 기록 (data/, OS temp, 사용자 홈 다중 동시 백업)
         targets = [self.token_cache_file]
-        if temp_cache and temp_cache != self.token_cache_file:
+        if temp_cache and temp_cache not in targets:
             targets.append(temp_cache)
+        if user_home_cache and user_home_cache not in targets:
+            targets.append(user_home_cache)
 
         for target_p in targets:
             tmp_file = f"{target_p}.tmp"
@@ -368,6 +481,11 @@ class KisClient:
 
                 # 토큰 만료 여부 확인 및 자동 갱신 복구
                 if auth_retry and self._is_token_expired(resp):
+                    if not self.allow_token_issue:
+                        logger.warning(
+                            "KIS token expired/invalid, but token issuance is disabled (allow_token_issue=False). Aborting request."
+                        )
+                        resp.raise_for_status()
                     logger.warning(
                         "KIS token expired/invalid (status=%d, msg=%s). Forcing token refresh and retrying request...",
                         resp.status_code,

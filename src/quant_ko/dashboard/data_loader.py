@@ -19,7 +19,7 @@ from typing import Any
 import pandas as pd
 from dotenv import load_dotenv
 
-from quant_ko.broker.kis import KisClient
+from quant_ko.broker.kis import KisClient, TokenIssueDisabledError, resolve_is_mock
 from quant_ko.config import PARKING_ETF_NAME, PARKING_ETF_TICKER
 from quant_ko.data.krx import normalize_date
 from quant_ko.data.store import DataStore
@@ -27,6 +27,9 @@ from quant_ko.strategy.scoring import score_and_select
 from quant_ko.strategy.universe import filter_universe, is_seasonality_parking_period
 
 logger = logging.getLogger(__name__)
+
+# 실전 계좌 최초 투입 원금 단일 진실원천 (10/30 체결 20종목 2,873,677원 + 예수금 313,887원)
+DEFAULT_REAL_INITIAL_CAPITAL = 3_045_188.0
 
 CD_ETF_TICKER = PARKING_ETF_TICKER
 CD_ETF_NAME = PARKING_ETF_NAME
@@ -445,8 +448,8 @@ def load_account_and_positions(
         계좌 상태, KPI 지표, 보유 종목 리스트 및 DataFrame을 포함한 딕셔너리.
     """
     load_dotenv()
-    kis_mode = os.getenv("KIS_MODE", "MOCK").strip().upper()
-    is_mock = kis_mode != "REAL"
+    is_mock = resolve_is_mock()
+    kis_mode = "MOCK" if is_mock else "REAL"
     prefix = "KIS_MOCK_" if is_mock else "KIS_REAL_"
 
     cano = (
@@ -458,13 +461,16 @@ def load_account_and_positions(
     prdt_cd = os.getenv(f"{prefix}ACNT_PRDT_CD") or os.getenv("KIS_ACNT_PRDT_CD", "01")
     masked_acc = mask_account_no(cano, prdt_cd)
 
-    # 환경변수 INITIAL_CAPITAL 설정 시 기본값 오버라이드
+    # 환경변수 INITIAL_CAPITAL 설정 시 기본값 오버라이드, 미설정 시 실전 투입 원금 단일 진실원천(SSOT) 적용
+    db_name = Path(db_path).name if db_path else ""
     env_cap = os.getenv("INITIAL_CAPITAL")
     if env_cap:
         try:
             initial_capital = float(env_cap)
         except (ValueError, TypeError):
             pass
+    elif not is_mock and db_name == "quant_ko.db":
+        initial_capital = DEFAULT_REAL_INITIAL_CAPITAL
 
     today_str = datetime.now().strftime("%Y-%m-%d")
     is_parking_season = is_seasonality_parking_period(today_str)
@@ -491,7 +497,12 @@ def load_account_and_positions(
     # 1. KIS API 실시간 잔고 조회 시도
     if fetch_live_kis:
         try:
-            client = KisClient()
+            try:
+                client = KisClient(allow_token_issue=False)
+            except TypeError:
+                client = KisClient()
+                if hasattr(client, "allow_token_issue"):
+                    client.allow_token_issue = False
             if client.app_key and client.app_secret and client.account_prefix:
                 balance = client.fetch_balance()
 
@@ -635,9 +646,9 @@ def load_account_and_positions(
                     and total_orders_count == 0
                     and total_equity < (initial_capital * 0.1)
                 )
-                # 실전 모드이고 초기자본이 1000만원 기본값인데 실제 총자산이 약 300만원인 경우 투입 시드(300만원)로 자동 정규화
-                if not is_mock and not env_cap and initial_capital == 10_000_000.0 and 2_500_000.0 <= total_equity <= 6_500_000.0:
-                    initial_capital = round(total_equity, 0)
+                # 실전 모드이고 환경변수가 없으면 실제 투입 원금 유지 (현재 평가액으로 덮어써서 수익률 0% 되는 버그 차단)
+                if not is_mock and not env_cap and db_name == "quant_ko.db":
+                    initial_capital = DEFAULT_REAL_INITIAL_CAPITAL
 
                 if is_unfunded:
                     return_pct = 0.0
@@ -668,6 +679,8 @@ def load_account_and_positions(
                     "positions_df": pd.DataFrame(positions_list),
                     "synced_at": datetime.now().strftime("%H:%M"),
                 }
+        except TokenIssueDisabledError as tiexc:
+            logger.info("KIS 실시간 잔고 조회 차단 (유효 토큰 부재 및 알림톡 방지): %s", tiexc)
         except Exception as exc:
             logger.info("KIS 실시간 잔고 조회 실패 (SQLite 오프라인 폴백 전환): %s", exc)
 
@@ -680,10 +693,9 @@ def load_account_and_positions(
         if not env_orders.empty:
             fallback_orders_df = env_orders
 
-    # 실전 모드이고 환경변수 INITIAL_CAPITAL 및 명시적 인자가 없을 때(기본 db_path) 실계좌 투입 자본으로 보정
-    db_name = Path(db_path).name if db_path else ""
-    if not is_mock and not env_cap and initial_capital == 10_000_000.0 and db_name == "quant_ko.db":
-        initial_capital = 5_780_449.0
+    # 실전 모드이고 환경변수 미설정 시 실계좌 최초 투입 원금으로 정합성 유지 (운영 DB 전용)
+    if not is_mock and not env_cap and db_name == "quant_ko.db":
+        initial_capital = DEFAULT_REAL_INITIAL_CAPITAL
 
     cash = float(initial_capital)
     holdings_qty: dict[str, int] = {}
@@ -809,14 +821,13 @@ def build_account_equity_curve(
 
     _ensure_seed_orders_loaded(store)
     db_name = Path(db_path).name if db_path else ""
-    kis_mode = os.getenv("KIS_MODE", "REAL").strip().upper()
-    is_mock = kis_mode != "REAL"
+    is_mock = resolve_is_mock()
+    kis_mode = "MOCK" if is_mock else "REAL"
     env_cap = os.getenv("INITIAL_CAPITAL")
-    if acc_info and float(acc_info.get("total_equity") or 0.0) > 0:
-        actual_total = float(acc_info["total_equity"])
-        initial_capital = actual_total
-    elif not is_mock and not env_cap and initial_capital == 10_000_000.0 and db_name == "quant_ko.db":
-        initial_capital = 3_057_900.0
+    if acc_info and float(acc_info.get("initial_capital") or 0.0) > 0:
+        initial_capital = float(acc_info["initial_capital"])
+    elif not is_mock and not env_cap and db_name == "quant_ko.db":
+        initial_capital = DEFAULT_REAL_INITIAL_CAPITAL
 
     try:
         if db_name == "quant_ko.db" and not is_mock:
@@ -887,8 +898,12 @@ def build_account_equity_curve(
     except Exception:
         trading_days = []
 
+    today_s = datetime.now().strftime("%Y-%m-%d")
     order_dates = sorted(exec_orders["norm_date"].unique().tolist())
-    all_dates = sorted(set(trading_days).union(order_dates))
+    if db_name == "quant_ko.db":
+        all_dates = sorted(set(trading_days).union(order_dates).union([today_s]))
+    else:
+        all_dates = sorted(set(trading_days).union(order_dates))
     if not all_dates:
         return pd.DataFrame(columns=columns)
 

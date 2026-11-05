@@ -187,6 +187,7 @@ src/quant_ko/
 1. **캐시 파일 일원화**: 프로젝트 루트의 `data/kis_token_real.json` (실전) / `data/kis_token_mock.json` (모의)에 토큰 저장.
 2. **토큰 재사용**: 08:30 일일 감시 봇이 발급한 유효 토큰을 15:20 리밸런싱에서 그대로 재사용하여 일일 1회 발급 원칙 준수.
 3. **만료 시 투명 복구**: API 호출 중 만료(401 또는 KIS 에러) 감지 시 로컬 캐시를 삭제하고 재발급받아 기존 요청을 1회 재시도.
+4. **토큰 선행 확인 및 부재 시에만 발급**: 24시간 이내 유효한 캐시 토큰이 존재하는지 먼저 확인하고, 유효한 토큰이 있을 때는 무조건 재사용하며, 캐시가 없거나 만료되었을 때만 KIS API를 호출하여 다중 경로(data/, temp, ~/.kis)에 원자적으로 저장.
 
 ### 6.3 OCI DB 패치 자동 동기화 (`apply_oci_db_patch_if_needed`)
 
@@ -253,7 +254,8 @@ src/quant_ko/
 ### 7.2 API 보호 및 캐싱 정책
 
 - **DB 오프라인 우선 조회**: 기본 로드 시 SQLite DB 데이터를 표기하여 불필요한 KIS 토큰 발급 방지 (`fetch_live_kis=False`).
-- **수동 동기화 UI (On-Demand Sync)**: `[🔄 KIS 실시간 잔고 동기화]` 버튼 클릭 시에만 1회 KIS API 호출.
+- **수동 동기화 UI (On-Demand Sync)**: `[🔄 KIS 실시간 잔고 동기화]` 버튼 클릭 시에만 1회 KIS API 호출 (기존 유효 토큰 우선 재사용, 부재 시 신규 발급).
+- **실전 초기 자본금 단일 진실원천(SSOT)**: 10월 30일 최초 실전 매수 체결액 및 예수금 기준 실투자 원금(3,187,564원)을 고정하여, 현재 자산 대비 실제 수익률(%)과 일자별 시장 시세 변동이 반영된 정밀 자산 곡선을 산출.
 - **Streamlit 캐시 보호**: `@st.cache_data(ttl=3600)` 적용으로 중복 호출 및 불필요한 카카오톡 알림톡 차단.
 
 ### 7.3 배포 환경(Streamlit Cloud) 데이터 연속성 및 시드 번들링 (Data Continuity & Bundled Seeds)
@@ -268,7 +270,7 @@ src/quant_ko/
 
 ### 7.4 KIS 실시간 연동 진단 및 에러 가시화 (Diagnostic & Error Visibility)
 
-- **Streamlit Secrets 완전 평탄화:** `st.secrets`의 중첩 섹션 딕셔너리를 재귀적으로 탐색하여 `os.environ`에 `KIS_MODE`, `KIS_REAL_*` 환경변수 완전 주입.
+- **Streamlit Secrets 완전 평탄화:** `st.secrets`의 중첩 섹션 딕셔너리를 재귀적으로 탐색하여 `os.environ`에 `KIS_REAL_*`, `KIS_MOCK_*` 등 인증 보안 비밀 주입. 브로커 실행 모드는 `config.toml`의 `[broker] default_env` 및 `resolve_is_mock()` 우선순위 계층에 따라 일관되게 해석.
 - **실시간 연동 실패 가시화:** KIS 잔고 조회 실패 시 에러를 침묵(Silent fallback)하지 않고, 상단 진단 경고 박스(오류 내용, 원인 및 조치 안내)를 명확히 노출하여 사용자가 상태를 즉시 파악할 수 있도록 보장.
 - **과거 리밸런싱 주문 조회 보강:** `client.fetch_orders()` 호출 시 당일뿐 아니라 최근 리밸런싱일(`20261030` 등) 주문까지 순회 동기화하여 누락 없는 실전 체결 내역 유지.
 

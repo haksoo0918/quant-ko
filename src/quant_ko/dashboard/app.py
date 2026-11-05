@@ -65,6 +65,7 @@ try:
     importlib.reload(_store_mod)
     importlib.reload(_dl_mod)
 
+    from quant_ko.broker.kis import KisClient  # noqa: E402
     from quant_ko.config import PARKING_ETF_NAME, PARKING_ETF_TICKER  # noqa: E402
     from quant_ko.dashboard.data_loader import (  # noqa: E402
         build_account_equity_curve,
@@ -446,19 +447,26 @@ def create_equity_curve_figure(equity_df: pd.DataFrame) -> go.Figure:
         col=1,
     )
 
+    min_eq = float(equity_df["total_equity"].min()) if not equity_df.empty else 3_000_000.0
+    max_eq = float(equity_df["total_equity"].max()) if not equity_df.empty else 3_500_000.0
+    buffer = max(50_000.0, (max_eq - min_eq) * 0.4)
+    y_min = max(0.0, min_eq - buffer)
+    y_max = max_eq + buffer
+
     fig.update_layout(
         barmode="stack",
-        height=560,
+        height=620,
         template="plotly_white",
         hovermode="x unified",
-        legend={"orientation": "h", "yanchor": "bottom", "y": 1.04, "xanchor": "right", "x": 1},
-        margin={"l": 40, "r": 25, "t": 65, "b": 40},
+        legend={"orientation": "h", "yanchor": "bottom", "y": 1.02, "xanchor": "right", "x": 1},
+        margin={"l": 60, "r": 30, "t": 85, "b": 50},
     )
     # X축: 일자 범주형(category) 타입 고정으로 00:00:00 자정 시간 표기 및 비거래일 공백 원천 제거
     fig.update_xaxes(type="category")
 
-    # Y축: 0원 기준(tozero) 적용으로 데이터 변동폭 미미 시 1원 단위 극단적 줌인 및 동일 숫자 중복 표출 방지
-    fig.update_yaxes(title_text="총자산 (원)", tickformat=",.0f", rangemode="tozero", row=1, col=1)
+    # 1행 Y축: 실제 자산 변동폭을 한눈에 볼 수 있도록 상하 버퍼 적용 오토 스케일링
+    fig.update_yaxes(title_text="총자산 (원)", tickformat=",.0f", range=[y_min, y_max], row=1, col=1)
+    # 2행 Y축: 자산 구성 비중 스택 바(0원 기준)
     fig.update_yaxes(title_text="금액 (원)", tickformat=",.0f", rangemode="tozero", row=2, col=1)
     return fig
 
