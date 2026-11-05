@@ -270,7 +270,7 @@ src/quant_ko/
 
 ### 7.4 KIS 실시간 연동 진단 및 에러 가시화 (Diagnostic & Error Visibility)
 
-- **Streamlit Secrets 완전 평탄화:** `st.secrets`의 중첩 섹션 딕셔너리를 재귀적으로 탐색하여 `os.environ`에 `KIS_MODE`, `KIS_REAL_*` 환경변수 완전 주입.
+- **Streamlit Secrets 완전 평탄화:** `st.secrets`의 중첩 섹션 딕셔너리를 재귀적으로 탐색하여 `os.environ`에 `KIS_REAL_*`, `KIS_MOCK_*` 등 인증 보안 비밀 주입. 브로커 실행 모드는 `config.toml`의 `[broker] default_env` 및 `resolve_is_mock()` 우선순위 계층에 따라 일관되게 해석.
 - **실시간 연동 실패 가시화:** KIS 잔고 조회 실패 시 에러를 침묵(Silent fallback)하지 않고, 상단 진단 경고 박스(오류 내용, 원인 및 조치 안내)를 명확히 노출하여 사용자가 상태를 즉시 파악할 수 있도록 보장.
 - **과거 리밸런싱 주문 조회 보강:** `client.fetch_orders()` 호출 시 당일뿐 아니라 최근 리밸런싱일(`20261030` 등) 주문까지 순회 동기화하여 누락 없는 실전 체결 내역 유지.
 

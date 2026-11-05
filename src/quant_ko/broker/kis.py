@@ -27,6 +27,35 @@ class TokenIssueDisabledError(RuntimeError):
     pass
 
 
+def resolve_is_mock(is_mock: bool | None = None) -> bool:
+    """실행 환경이 모의투자(Mock)인지 실전(Real)인지 우선순위에 따라 판별합니다.
+
+    우선순위:
+    1. 함수 호출 시 명시적으로 전달된 is_mock 인자
+    2. config.toml의 [broker] default_env 설정 ('real' -> False, 'mock' -> True)
+    3. 레거시 환경변수 KIS_MODE ('REAL' -> False, 'MOCK' -> True)
+    4. 기본값: 안전을 위해 True (Mock 모드)
+    """
+    if is_mock is not None:
+        return bool(is_mock)
+
+    try:
+        from quant_ko.config import load_config
+
+        cfg = load_config()
+        broker_env = str(cfg.get("broker", {}).get("default_env", "")).strip().lower()
+        if broker_env in ("real", "mock"):
+            return broker_env == "mock"
+    except Exception:
+        pass
+
+    env_mode = os.getenv("KIS_MODE")
+    if env_mode:
+        return env_mode.strip().upper() != "REAL"
+
+    return True
+
+
 def get_krx_tick_size(price: float, is_etf: bool = False) -> int:
     """KRX 호가 단위를 반환합니다 (일반 주식 통합 호가 단위 및 ETF 호가 단위 적용)."""
     if is_etf:
@@ -124,12 +153,8 @@ class KisClient:
         session: requests.Session | None = None,
         allow_token_issue: bool = True,
     ) -> None:
-        # 명시적으로 지정되지 않은 경우 KIS_MODE 환경변수로부터 모드 판별
-        if is_mock is None:
-            mode = os.getenv("KIS_MODE", "MOCK").strip().upper()
-            self.is_mock = mode != "REAL"
-        else:
-            self.is_mock = is_mock
+        # 명시적 인자 > config.toml의 broker.default_env > KIS_MODE > 기본값(Mock)
+        self.is_mock = resolve_is_mock(is_mock)
 
         # 환경변수 접두사 설정: KIS_MOCK_* 또는 KIS_REAL_*
         prefix = "KIS_MOCK_" if self.is_mock else "KIS_REAL_"
@@ -179,9 +204,7 @@ class KisClient:
         cls, is_mock: bool | None = None
     ) -> dict[str, Any]:
         """캐시된 KIS 토큰의 상태를 발급 API 호출 없이 순수 검사합니다."""
-        if is_mock is None:
-            mode = os.getenv("KIS_MODE", "MOCK").strip().upper()
-            is_mock = mode != "REAL"
+        is_mock = resolve_is_mock(is_mock)
         mode_str = "mock" if is_mock else "real"
         now = time.time()
 
