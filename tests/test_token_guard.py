@@ -14,7 +14,7 @@ from quant_ko.dashboard.data_loader import load_account_and_positions
 def test_allow_token_issue_false_blocks_token_request_when_no_cache(tmp_path):
     """캐시가 없고 allow_token_issue=False일 때 tokenP 엔드포인트 요청이 절대 발생하지 않고 TokenIssueDisabledError가 발생하는지 검증."""
     dummy_cache = tmp_path / "kis_token_real.json"
-    
+
     client = KisClient(
         app_key="dummy_key",
         app_secret="dummy_secret",
@@ -67,18 +67,18 @@ def test_allow_token_issue_false_uses_valid_cache_without_request(tmp_path):
 def test_dashboard_load_account_never_requests_token_p_when_cache_missing(tmp_path):
     """대시보드 실시간 잔고 조회 시 유효 토큰이 없어도 tokenP 호출이 0회이며 오프라인 폴백이 정상 작동하는지 검증."""
     dummy_db = tmp_path / "quant_ko.db"
-    
+
     with patch("quant_ko.broker.kis.KisClient.get_access_token") as mock_get_token, \
          patch("requests.Session.post") as mock_post:
-        
+
         # 유효 토큰이 없어 차단 에러를 던지도록 설정
         mock_get_token.side_effect = TokenIssueDisabledError("Token issuance blocked")
-        
+
         res = load_account_and_positions(db_path=dummy_db, fetch_live_kis=True)
-        
+
         # tokenP POST 요청이 0회여야 함
         mock_post.assert_not_called()
-        
+
         # 결과는 오프라인 폴백 기반으로 안전하게 반환되어야 함
         assert isinstance(res, dict)
         assert res.get("source") != "KIS_LIVE"
@@ -107,8 +107,9 @@ def test_get_cached_token_status_pure_check(tmp_path):
 def test_main_status_mode_blocks_token_issue_by_default():
     """main.py status 모드 실행 시 유효 토큰이 없으면 KIS API 호출이 0회이며 토큰 차단 안내가 출력되는지 검증."""
     from unittest.mock import patch
-    from quant_ko.main import print_status
+
     from quant_ko.broker.kis import KisClient, TokenIssueDisabledError
+    from quant_ko.main import print_status
 
     mock_client = MagicMock(spec=KisClient)
     mock_client.account_prefix = "12345678"
@@ -117,7 +118,7 @@ def test_main_status_mode_blocks_token_issue_by_default():
 
     with patch("builtins.print") as mock_print:
         print_status(kis_client=mock_client, env="real", date_str="2026-11-05")
-        
+
         # 안내 문구가 출력되었는지 확인
         printed_texts = " ".join(str(call.args[0]) for call in mock_print.call_args_list if call.args)
         assert "토큰 미발급/만료 상태" in printed_texts

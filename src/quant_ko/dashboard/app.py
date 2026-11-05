@@ -59,13 +59,14 @@ from plotly.subplots import make_subplots  # noqa: E402
 try:
     import importlib
 
+    import quant_ko.broker.kis as _kis_mod
     import quant_ko.dashboard.data_loader as _dl_mod
     import quant_ko.data.store as _store_mod
 
+    importlib.reload(_kis_mod)
     importlib.reload(_store_mod)
     importlib.reload(_dl_mod)
 
-    from quant_ko.broker.kis import KisClient  # noqa: E402
     from quant_ko.config import PARKING_ETF_NAME, PARKING_ETF_TICKER  # noqa: E402
     from quant_ko.dashboard.data_loader import (  # noqa: E402
         build_account_equity_curve,

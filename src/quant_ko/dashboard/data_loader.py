@@ -449,7 +449,6 @@ def load_account_and_positions(
     """
     load_dotenv()
     is_mock = resolve_is_mock()
-    kis_mode = "MOCK" if is_mock else "REAL"
     prefix = "KIS_MOCK_" if is_mock else "KIS_REAL_"
 
     cano = (
@@ -822,7 +821,6 @@ def build_account_equity_curve(
     _ensure_seed_orders_loaded(store)
     db_name = Path(db_path).name if db_path else ""
     is_mock = resolve_is_mock()
-    kis_mode = "MOCK" if is_mock else "REAL"
     env_cap = os.getenv("INITIAL_CAPITAL")
     if acc_info and float(acc_info.get("initial_capital") or 0.0) > 0:
         initial_capital = float(acc_info["initial_capital"])
