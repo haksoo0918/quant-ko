@@ -184,10 +184,10 @@ class KisClient:
 
         self.base_url = MOCK_BASE_URL if self.is_mock else REAL_BASE_URL
         self.session = session or requests.Session()
-        self.token_cache_file = str(
-            Path(__file__).resolve().parents[3]
-            / "data"
-            / f"kis_token_{'mock' if self.is_mock else 'real'}.json"
+        _pkg_dir = os.path.dirname(os.path.abspath(__file__))
+        _proj_dir = os.path.dirname(os.path.dirname(os.path.dirname(_pkg_dir)))
+        self.token_cache_file = os.path.join(
+            _proj_dir, "data", f"kis_token_{'mock' if self.is_mock else 'real'}.json"
         )
 
         self._access_token: str | None = None
@@ -210,7 +210,7 @@ class KisClient:
 
         home_dir = os.path.expanduser("~")
         candidates = [
-            str(Path(__file__).resolve().parents[3] / "data" / f"kis_token_{mode_str}.json"),
+            os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))), "data", f"kis_token_{mode_str}.json"),
             str(Path("data") / f"kis_token_{mode_str}.json"),
             os.path.join(tempfile.gettempdir(), f"kis_token_{mode_str}.json"),
             os.path.join(home_dir, ".kis", f"kis_token_{mode_str}.json"),
@@ -272,13 +272,27 @@ class KisClient:
         now = time.time()
         mode_str = "mock" if self.is_mock else "real"
         cache_key = f"{mode_str}_{self.app_key}_{os.path.abspath(self.token_cache_file)}"
-        default_file = f"data/kis_token_{mode_str}.json"
+        _pkg_dir = os.path.dirname(os.path.abspath(__file__))
+        _proj_dir = os.path.dirname(os.path.dirname(os.path.dirname(_pkg_dir)))
+        default_file = os.path.join(_proj_dir, "data", f"kis_token_{mode_str}.json")
         is_default_file = os.path.abspath(self.token_cache_file) == os.path.abspath(default_file)
-        temp_cache = (
-            os.path.join(tempfile.gettempdir(), f"kis_token_{mode_str}.json")
-            if is_default_file
-            else None
-        )
+
+        candidate_files = [self.token_cache_file]
+        targets = [self.token_cache_file]
+        temp_cache = None
+        user_home_cache = None
+
+        # 기본 운영 경로일 때만 홈 디렉터리 및 OS 임시 디렉터리 다중 백업 활성화 (테스트/커스텀 격리 보장)
+        if is_default_file:
+            home_dir = os.path.expanduser("~")
+            user_home_cache = os.path.join(home_dir, ".kis", f"kis_token_{mode_str}.json")
+            temp_cache = os.path.join(tempfile.gettempdir(), f"kis_token_{mode_str}.json")
+            if user_home_cache not in candidate_files:
+                candidate_files.append(user_home_cache)
+                targets.append(user_home_cache)
+            if temp_cache not in candidate_files:
+                candidate_files.append(temp_cache)
+                targets.append(temp_cache)
 
         if force_refresh:
             if not effective_allow_issue:
@@ -288,18 +302,14 @@ class KisClient:
             self._access_token = None
             self._token_expires_at = 0.0
             KisClient._shared_token_cache.pop(cache_key, None)
-            if os.path.exists(self.token_cache_file):
-                try:
-                    os.remove(self.token_cache_file)
-                except Exception as exc:
-                    logger.warning(
-                        "Failed to remove KIS token cache file %s: %s", self.token_cache_file, exc
-                    )
-            if temp_cache and os.path.exists(temp_cache):
-                try:
-                    os.remove(temp_cache)
-                except Exception:
-                    pass
+            for f_path in targets:
+                if os.path.exists(f_path):
+                    try:
+                        os.remove(f_path)
+                    except Exception as exc:
+                        logger.warning(
+                            "Failed to remove KIS token cache file %s: %s", f_path, exc
+                        )
 
         # 1. 인스턴스 인메모리 캐시 유효성 확인
         if not force_refresh and self._access_token and now < self._token_expires_at - 60:
@@ -310,15 +320,6 @@ class KisClient:
                 remaining_h,
             )
             return self._access_token
-
-        # 2. 파일 캐시 확인 (data/ 폴더 및 기본 경로 시 OS 임시 디렉터리 다중 경로 확인)
-        candidate_files = [self.token_cache_file]
-        home_dir = os.path.expanduser("~")
-        user_home_cache = os.path.join(home_dir, ".kis", f"kis_token_{mode_str}.json")
-        if user_home_cache not in candidate_files:
-            candidate_files.append(user_home_cache)
-        if temp_cache and temp_cache != self.token_cache_file:
-            candidate_files.append(temp_cache)
 
         if not force_refresh:
             for c_file in candidate_files:
@@ -390,12 +391,7 @@ class KisClient:
         self._token_expires_at = now + expires_in
         KisClient._shared_token_cache[cache_key] = (self._access_token, self._token_expires_at)
 
-        # 안전한 권한으로 파일에 원자적(atomic) 기록 (data/, OS temp, 사용자 홈 다중 동시 백업)
-        targets = [self.token_cache_file]
-        if temp_cache and temp_cache not in targets:
-            targets.append(temp_cache)
-        if user_home_cache and user_home_cache not in targets:
-            targets.append(user_home_cache)
+        # 안전한 권한으로 파일에 원자적(atomic) 기록 (기본 경로 시 다중 동시 백업)
 
         for target_p in targets:
             tmp_file = f"{target_p}.tmp"
