@@ -19,7 +19,7 @@ from typing import Any
 import pandas as pd
 from dotenv import load_dotenv
 
-from quant_ko.broker.kis import KisClient
+from quant_ko.broker.kis import KisClient, TokenIssueDisabledError
 from quant_ko.config import PARKING_ETF_NAME, PARKING_ETF_TICKER
 from quant_ko.data.krx import normalize_date
 from quant_ko.data.store import DataStore
@@ -491,7 +491,12 @@ def load_account_and_positions(
     # 1. KIS API 실시간 잔고 조회 시도
     if fetch_live_kis:
         try:
-            client = KisClient()
+            try:
+                client = KisClient(allow_token_issue=False)
+            except TypeError:
+                client = KisClient()
+                if hasattr(client, "allow_token_issue"):
+                    client.allow_token_issue = False
             if client.app_key and client.app_secret and client.account_prefix:
                 balance = client.fetch_balance()
 
@@ -668,6 +673,8 @@ def load_account_and_positions(
                     "positions_df": pd.DataFrame(positions_list),
                     "synced_at": datetime.now().strftime("%H:%M"),
                 }
+        except TokenIssueDisabledError as tiexc:
+            logger.info("KIS 실시간 잔고 조회 차단 (유효 토큰 부재 및 알림톡 방지): %s", tiexc)
         except Exception as exc:
             logger.info("KIS 실시간 잔고 조회 실패 (SQLite 오프라인 폴백 전환): %s", exc)
 
