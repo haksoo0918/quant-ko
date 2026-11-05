@@ -19,7 +19,19 @@ from typing import Any
 import pandas as pd
 from dotenv import load_dotenv
 
-from quant_ko.broker.kis import KisClient, TokenIssueDisabledError, resolve_is_mock
+try:
+    from quant_ko.broker.kis import KisClient, TokenIssueDisabledError, resolve_is_mock
+except ImportError:  # pragma: no cover - Streamlit Cloud 프로세스 핫 리로드 시 구버전 모듈 캐시 완충
+    from quant_ko.broker.kis import KisClient  # type: ignore[no-redef]
+
+    class TokenIssueDisabledError(RuntimeError):  # type: ignore[no-redef]
+        """신규 KIS 토큰 발급 비활성화 예외 폴백."""
+        pass
+
+    def resolve_is_mock(is_mock: bool | None = None) -> bool:  # type: ignore[no-redef]
+        if is_mock is not None:
+            return bool(is_mock)
+        return os.getenv("KIS_MODE", "MOCK").strip().upper() != "REAL"
 from quant_ko.config import PARKING_ETF_NAME, PARKING_ETF_TICKER
 from quant_ko.data.krx import normalize_date
 from quant_ko.data.store import DataStore

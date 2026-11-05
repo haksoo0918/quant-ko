@@ -58,14 +58,21 @@ from plotly.subplots import make_subplots  # noqa: E402
 
 try:
     import importlib
+    import sys
 
-    import quant_ko.broker.kis as _kis_mod
-    import quant_ko.dashboard.data_loader as _dl_mod
-    import quant_ko.data.store as _store_mod
-
-    importlib.reload(_kis_mod)
-    importlib.reload(_store_mod)
-    importlib.reload(_dl_mod)
+    # Streamlit Cloud 핫 리로드 시 메모리에 남아있는 구버전 모듈을 의존성 순서대로 강제 리로드
+    for _mod_name in (
+        "quant_ko.config",
+        "quant_ko.broker.kis",
+        "quant_ko.broker",
+        "quant_ko.data.store",
+        "quant_ko.dashboard.data_loader",
+    ):
+        if _mod_name in sys.modules:
+            try:
+                importlib.reload(sys.modules[_mod_name])
+            except Exception:
+                pass
 
     from quant_ko.config import PARKING_ETF_NAME, PARKING_ETF_TICKER  # noqa: E402
     from quant_ko.dashboard.data_loader import (  # noqa: E402
